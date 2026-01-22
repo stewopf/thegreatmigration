@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>GoHighLevel Data Viewer</title>
+        <style>
+            *, *::before, *::after {
+                box-sizing: border-box;
+            }
+            :root {
+                --bg: #0b1f3a;
+                --bg-2: #0f2a52;
+                --panel: rgba(255, 255, 255, 0.08);
+                --panel-2: rgba(255, 255, 255, 0.12);
+                --border: rgba(255, 255, 255, 0.16);
+                --text: #f7f9fc;
+                --muted: #c7d2ea;
+                --accent: #f06a4b;
+                --accent-dark: #d9563d;
+                --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+            }
+            body {
+                font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+                margin: 0;
+                padding: 32px;
+                background: radial-gradient(circle at top left, var(--bg-2), var(--bg));
+                color: var(--text);
+            }
+            h1 {
+                margin: 0 0 12px;
+                font-size: 28px;
+                letter-spacing: 0.2px;
+            }
+            .subtitle {
+                margin-bottom: 28px;
+                color: var(--muted);
+            }
+            .layout {
+                display: grid;
+                gap: 18px;
+            }
+            .entity {
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 12px;
+                margin-bottom: 16px;
+                background: var(--panel);
+                backdrop-filter: blur(18px);
+                box-shadow: var(--shadow);
+            }
+            .entity summary {
+                cursor: pointer;
+                font-weight: 600;
+                font-size: 16px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            .query-bar {
+                display: flex;
+                gap: 8px;
+                margin: 12px 0;
+            }
+            .query-bar input {
+                flex: 1;
+                padding: 8px;
+                border-radius: 6px;
+                border: 1px solid var(--border);
+                background: rgba(15, 23, 42, 0.35);
+                color: var(--text);
+            }
+            .query-bar button {
+                padding: 8px 14px;
+                border-radius: 6px;
+                border: 1px solid var(--accent-dark);
+                background: var(--accent);
+                color: #ffffff;
+                cursor: pointer;
+                transition: transform 0.2s ease, box-shadow 0.2s ease;
+                box-shadow: 0 10px 20px rgba(240, 106, 75, 0.35);
+            }
+            .query-bar button:hover {
+                transform: translateY(-1px);
+            }
+            .results {
+                display: grid;
+                gap: 8px;
+            }
+            .result-item {
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 8px;
+                background: rgba(15, 23, 42, 0.4);
+                animation: resultFadeIn 220ms ease-out;
+            }
+            pre {
+                white-space: pre-wrap;
+                word-break: break-word;
+                margin: 8px 0 0;
+                max-height: 0;
+                opacity: 0;
+                overflow: hidden;
+                transition: max-height 240ms ease, opacity 200ms ease;
+            }
+            .result-item[open] pre {
+                max-height: 320px;
+                opacity: 1;
+                overflow: auto;
+            }
+            .status {
+                font-size: 12px;
+                color: var(--muted);
+            }
+            .count-pill {
+                background: rgba(240, 106, 75, 0.15);
+                color: #ffd2c5;
+                padding: 2px 10px;
+                border-radius: 999px;
+                font-size: 12px;
+                border: 1px solid rgba(240, 106, 75, 0.35);
+            }
+            @keyframes resultFadeIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(6px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <h1>GoHighLevel Data Viewer</h1>
+        <div class="subtitle">Query and explore your synced entities in real time.</div>
+
+        <div class="layout">
+        <details class="entity" open>
+            <summary>Contacts <span id="contacts-count" class="count-pill">(0)</span></summary>
+            <div class="query-bar">
+                <input id="contacts-query" placeholder='{"email":"test@example.com"}' />
+                <button data-collection="contacts">Query</button>
+            </div>
+            <div class="status" id="contacts-status">Ready</div>
+            <div class="results" id="contacts-results"></div>
+        </details>
+
+        <details class="entity">
+            <summary>Users <span id="users-count" class="count-pill">(0)</span></summary>
+            <div class="query-bar">
+                <input id="users-query" placeholder='{"name":"John"}' />
+                <button data-collection="users">Query</button>
+            </div>
+            <div class="status" id="users-status">Ready</div>
+            <div class="results" id="users-results"></div>
+        </details>
+
+        <details class="entity">
+            <summary>Opportunities <span id="opportunities-count" class="count-pill">(0)</span></summary>
+            <div class="query-bar">
+                <input id="opportunities-query" placeholder='{"status":"open"}' />
+                <button data-collection="opportunities">Query</button>
+            </div>
+            <div class="status" id="opportunities-status">Ready</div>
+            <div class="results" id="opportunities-results"></div>
+        </details>
+
+        <details class="entity">
+            <summary>Calendars <span id="calendars-count" class="count-pill">(0)</span></summary>
+            <div class="query-bar">
+                <input id="calendars-query" placeholder='{"name":"Main Calendar"}' />
+                <button data-collection="calendars">Query</button>
+            </div>
+            <div class="status" id="calendars-status">Ready</div>
+            <div class="results" id="calendars-results"></div>
+        </details>
+        </div>
+
+        <script>
+            const collectionConfig = {
+                contacts: { input: 'contacts-query', results: 'contacts-results', status: 'contacts-status', count: 'contacts-count' },
+                users: { input: 'users-query', results: 'users-results', status: 'users-status', count: 'users-count' },
+                opportunities: { input: 'opportunities-query', results: 'opportunities-results', status: 'opportunities-status', count: 'opportunities-count' },
+                calendars: { input: 'calendars-query', results: 'calendars-results', status: 'calendars-status', count: 'calendars-count' }
+            };
+
+            function renderResults(collection, items) {
+                const { results, status } = collectionConfig[collection];
+                const resultsEl = document.getElementById(results);
+                const statusEl = document.getElementById(status);
+                resultsEl.innerHTML = '';
+                statusEl.textContent = `Found ${items.length} record(s)`;
+                items.forEach((item, index) => {
+                    const wrapper = document.createElement('details');
+                    wrapper.className = 'result-item';
+                    const summary = document.createElement('summary');
+                    summary.textContent = item.id ? `${item.id}` : `Item ${index + 1}`;
+                    const pre = document.createElement('pre');
+                    pre.textContent = JSON.stringify(item, null, 2);
+                    wrapper.appendChild(summary);
+                    wrapper.appendChild(pre);
+                    resultsEl.appendChild(wrapper);
+                });
+            }
+
+            function setStatus(collection, message) {
+                const statusEl = document.getElementById(collectionConfig[collection].status);
+                statusEl.textContent = message;
+            }
+
+            async function loadCounts() {
+                await Promise.all(
+                    Object.keys(collectionConfig).map(async (collection) => {
+                        try {
+                            const response = await fetch(`/api/${collection}/count`);
+                            const data = await response.json();
+                            if (!response.ok) {
+                                return;
+                            }
+                            const countEl = document.getElementById(collectionConfig[collection].count);
+                            countEl.textContent = `(${data.count ?? 0})`;
+                        } catch (err) {
+                            // ignore count errors
+                        }
+                    })
+                );
+            }
+
+            async function runQuery(collection) {
+                const inputEl = document.getElementById(collectionConfig[collection].input);
+                const rawQuery = inputEl.value.trim();
+                let query = {};
+                if (rawQuery) {
+                    try {
+                        query = JSON.parse(rawQuery);
+                    } catch (err) {
+                        setStatus(collection, 'Invalid JSON query');
+                        return;
+                    }
+                }
+                setStatus(collection, 'Loading...');
+                try {
+                    const response = await fetch(`/api/${collection}/query`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        setStatus(collection, data?.error || 'Request failed');
+                        return;
+                    }
+                    renderResults(collection, data.items || []);
+                } catch (err) {
+                    setStatus(collection, err.message);
+                }
+            }
+
+            document.querySelectorAll('button[data-collection]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    runQuery(button.dataset.collection);
+                });
+            });
+
+            loadCounts();
+        </script>
+    </body>
+</html>

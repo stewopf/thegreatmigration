@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { MongoClient } from 'mongodb';
 import logger from './src/log.mjs'
 const log = logger(import.meta.url);
 
@@ -6,6 +7,65 @@ const HIGHLEVEL_API_URL = process.env.HIGHLEVEL_API_URL;
 const HIGHLEVEL_API_KEY = process.env.HIGHLEVEL_API_KEY;
 const HIGHLEVEL_LOCATION_ID = process.env.HIGHLEVEL_LOCATION_ID;
 const HIGHLEVEL_DEFAULT_USER_ID = process.env.HIGHLEVEL_DEFAULT_USER_ID;
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017';
+const MONGO_DB_NAME = 'GoHighLevel';
+
+let mongoClient;
+let mongoDb;
+
+async function getMongoDb() {
+    if (mongoDb) {
+        return mongoDb;
+    }
+    if (!MONGO_URI) {
+        throw new Error('MONGO_URI is not set');
+    }
+    if (!mongoClient) {
+        mongoClient = new MongoClient(MONGO_URI);
+    }
+    if (!mongoClient.topology?.isConnected?.()) {
+        await mongoClient.connect();
+    }
+    mongoDb = mongoClient.db(MONGO_DB_NAME);
+    return mongoDb;
+}
+
+async function upsertById(collectionName, items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return 0;
+    }
+    const db = await getMongoDb();
+    const collection = db.collection(collectionName);
+    const operations = items
+        .filter((item) => item && item.id)
+        .map((item) => ({
+            replaceOne: {
+                filter: { id: item.id },
+                replacement: item,
+                upsert: true
+            }
+        }));
+    if (operations.length === 0) {
+        return 0;
+    }
+    const result = await collection.bulkWrite(operations, { ordered: false });
+    return result.upsertedCount + result.modifiedCount + result.matchedCount;
+}
+
+export async function storeGhlData({ contacts, users, opportunities, calendars }) {
+    const [contactsCount, usersCount, opportunitiesCount, calendarsCount] = await Promise.all([
+        upsertById('contacts', contacts),
+        upsertById('users', users),
+        upsertById('opportunities', opportunities),
+        upsertById('calendars', calendars)
+    ]);
+    return {
+        contacts: contactsCount,
+        users: usersCount,
+        opportunities: opportunitiesCount,
+        calendars: calendarsCount
+    };
+}
 
 export async function syncNotes(notes) {
     for await (const note of (notes || [])) {
@@ -105,37 +165,6 @@ async function retrieveHighlevelCustomFields(model = 'contact') {
         log.warn('retrieveHighlevelCustomFields model=%s, url=%s, error=%s', model, url, err.toString());
     }
 }
-export async function searchForAndAdoptHighlevelTenants(email, phone, refresh) {
-    log.debug('searchForAndAdoptHighlevelTenants email=%s, phone=%s', email, phone);
-    const headers = {
-        Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
-        'Content-Type': 'application/json',
-        Version: '2021-07-28'
-    };
-    const payload = { locationId: HIGHLEVEL_LOCATION_ID, page: 1, pageLimit: 20 }
-    let url = `${HIGHLEVEL_API_URL}/contacts/search`;
-    if (email) {
-        payload.query = email;
-    }
-    if (phone) {
-        payload.query = phone;
-    }
-    try {
-        let response = await axios.post(url, payload, { headers });
-        if (response.status === 200) {
-            const contacts = response?.data?.contacts;
-            if (Array.isArray(contacts) && contacts.length > 0) {
-                const fields = await retrieveHighlevelCustomFields('contact');
-                return adoptHighlevelTenants(contacts, fields, refresh);
-            }
-        } else {
-            log.debug('searchForAndAdoptHighlevelTenants email=%s, phone=%s, response.status=%s, headers=%o', email, phone, response.status, headers);
-        }
-    } catch (err) {
-        log.warn('searchForAndAdoptHighlevelTenants email=%s, phone=%s, header=%o, error=%s', email, phone, headers, err.toString());
-    }
-    return null;
-}
 
 async function delay(time = 2 * 1000) {
     return new Promise((resolve, reject) => {
@@ -162,18 +191,82 @@ async function getUsers() {
     return null;
 }
 
+export async function getAllConversations(locationId = HIGHLEVEL_LOCATION_ID) {
+    const headers = {
+        Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
+        'Content-Type': 'application/json',
+        Version: '2021-07-28'
+    };
+    const ALL_CONVERSATIONS = [];
+    const baseUrl = `${HIGHLEVEL_API_URL || ''}`.replace(/\/+$/, '');
+    const pageSize = 100;
+    let page = 1;
+    let url = `${baseUrl}/conversations/search?locationId=${encodeURIComponent(locationId)}&page=${page}&limit=${pageSize}`;
+    let nextUrl = url.replace('http:', 'https:');
+    let total = -1;
+    while (nextUrl) {
+        try {
+            log.debug('getAllConversations url=%s, page=%s, total=%s', nextUrl, page, total);
+            const response = await axios.get(nextUrl, { headers });
+            const data = response?.data || {};
+            const conversations = data?.conversations || data?.items || data?.data || data;
+            if (Array.isArray(conversations)) {
+                ALL_CONVERSATIONS.push(...conversations);
+                return ALL_CONVERSATIONS;
+            }
+            if (total === -1) {
+                total = data.total;
+            }
+            total -= pageSize;
+            if (total <= 0) {
+                log.debug('getAllConversations total < 0, breaking');
+                nextUrl = null;
+                break;
+            }
+            page++;
+            nextUrl = `${baseUrl}/conversations/search?locationId=${encodeURIComponent(locationId)}&page=${page}&limit=${pageSize}`;
+            await delay();
+        } catch (err) {
+            const status = err?.response?.status;
+            if (status !== 404) {
+                log.warn('getAllConversations url=%s, status=%s, error=%s', nextUrl, status, err.toString());
+                return ALL_CONVERSATIONS;
+            }
+            log.warn('getAllConversations url=%s returned 404', nextUrl);
+            break;
+        }
+    }
+    return ALL_CONVERSATIONS;
+}
+
 async function getOpportunities() {
     const headers = {
         Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
         'Content-Type': 'application/json',
         Version: '2021-07-28'
     };
-    const url = `${HIGHLEVEL_API_URL}/opportunities/search?location_id=${HIGHLEVEL_LOCATION_ID}`;
-    try {
-        const response = await axios.get(url, { headers });
-        return response?.data?.opportunities;
-    } catch (err) {
-        log.warn('getOpportunities url=%s, error=%s', url, err.toString());
+    let page = 1;
+    const pageSize = 100;    
+    let opportunities = [];
+    while (true) {
+        const url = `${HIGHLEVEL_API_URL}/opportunities/search?location_id=${HIGHLEVEL_LOCATION_ID}&page=${page}&limit=${pageSize}`;
+        try {
+            const response = await axios.get(url, { headers });
+            if (response.status === 200) {
+                if (!Array.isArray(response?.data?.opportunities)) {
+                    return opportunities;
+                }
+                opportunities = opportunities.concat(response?.data?.opportunities || []);
+                log.debug('getOpportunities page=%s, total=%s', page, opportunities.length);
+                await delay();
+            } else {
+                log.warn('getOpportunities url=%s, status=%s, error=%s', url, response.status, response.data);
+                return opportunities;
+            }
+            page++;
+        } catch (err) {
+            log.warn('getOpportunities url=%s, error=%s', url, err.toString());
+        }
     }
     return null;
 }
@@ -344,7 +437,7 @@ export async function importAllHighLevelContacts(url) {
         'Content-Type': 'application/json',
         Version: '2021-07-28'
     };
-    const ALL_CONTACTS = [];
+    let ALL_CONTACTS = [];
     url = url || `${HIGHLEVEL_API_URL}/contacts?limit=100&locationId=${HIGHLEVEL_LOCATION_ID}`;
     url = url.replace('http:', 'https:');
     try {
@@ -353,25 +446,33 @@ export async function importAllHighLevelContacts(url) {
             const contacts = response?.data?.contacts;
             if (Array.isArray(contacts) && contacts.length > 0) {
                 totalLoaded += contacts.length;
-                console.log(totalLoaded);
+                log.debug('importAllHighLevelContacts totalLoaded=%s', totalLoaded);
+                ALL_CONTACTS = ALL_CONTACTS.concat(contacts);
                 if (response?.data?.meta?.nextPageUrl) {
                     await delay();
                     await importAllHighLevelContacts(response?.data?.meta?.nextPageUrl);
                 }
-                ALL_CONTACTS.push(...contacts);
             }
         }
     } catch (err) {
-        console.log(err);
+        log.warn('importAllHighLevelContacts url=%s, error=%s', url, err.toString());
     }
     return ALL_CONTACTS;
 }
 
 setTimeout(async () => {
-    // console.log(await importAllHighLevelContacts());
+    // const contacts = await importAllHighLevelContacts();
     // const users = await getUsers();
     // const opportunities = await getOpportunitiesWithCustomFields();
-    // console.log(users.length);
-    console.log((await getCalendars())[0].appointments);
-}, 2000);
+    // const calendars = await getCalendars();
+    // const stored = await storeGhlData({
+    //     contacts,
+    //     users,
+    //     opportunities: opportunities?.opportunities || opportunities,
+    //     calendars
+    // });
+    // log.info('Stored GHL data %o', stored);
+    // console.log(opportunities.opportunities.length);
+    console.log((await getAllConversations())[0]);
+}, 2000)
 
