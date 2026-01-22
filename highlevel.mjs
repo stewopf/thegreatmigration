@@ -49,88 +49,29 @@ async function upsertById(collectionName, items) {
         return 0;
     }
     const result = await collection.bulkWrite(operations, { ordered: false });
-    return result.upsertedCount + result.modifiedCount + result.matchedCount;
+    return { upserted: result.upsertedCount, modified: result.modifiedCount, matched: result.matchedCount };
 }
 
-export async function storeGhlData({ contacts, users, opportunities, calendars }) {
-    const [contactsCount, usersCount, opportunitiesCount, calendarsCount] = await Promise.all([
+export async function storeGhlData({ contacts, users, opportunities, calendars, conversations, customFields }) {
+    const [contactsCount, usersCount, opportunitiesCount, calendarsCount, conversationsCount, customFieldsCount] = await Promise.all([
         upsertById('contacts', contacts),
         upsertById('users', users),
         upsertById('opportunities', opportunities),
-        upsertById('calendars', calendars)
+        upsertById('calendars', calendars),
+        upsertById('conversations', conversations),
+        upsertById('customfields', customFields)
     ]);
     return {
         contacts: contactsCount,
         users: usersCount,
         opportunities: opportunitiesCount,
-        calendars: calendarsCount
+        calendars: calendarsCount,
+        conversations: conversationsCount,
+        customFields: customFieldsCount
     };
 }
 
-export async function syncNotes(notes) {
-    for await (const note of (notes || [])) {
-        if (note.wasChanged && note.foreignContactId) {
-            if (note.foreignId) {
-                await updateNote(note.foreignUserId, note.foreignContactId, note.foreignId, note.text);
-            } else {
-                await createNote(note.foreignUserId, note.foreignContactId, note.text);
-            }
-        }
-    }
-}
-async function updateNote(userId, contactId, noteId, text) {
-    log.debug('updateNode userId=%s, contactId=%s, noteId=%s, text=%s', userId, contactId, noteId, text);
-    userId = userId || HIGHLEVEL_DEFAULT_USER_ID;
-    const headers = {
-        Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
-        'Content-Type': 'application/json',
-        Version: '2021-07-28'
-    };
 
-    const url = `${HIGHLEVEL_API_URL}/contacts/${encodeURIComponent(contactId)}/notes/${noteId}`;
-    try {
-        const payload = { userId, body: text }
-        const response = await axios.put(url, payload, { headers });
-        console.log(response);
-
-    } catch (err) {
-        log.warn('updateNote url=%s, error=%s', url, err.toString());
-    }
-
-}
-async function createNote(userId, contactId, text) {
-    log.debug('createNote userId=%s, contactId=%s, text=%s', userId, contactId, text);
-
-    userId = userId || HIGHLEVEL_DEFAULT_USER_ID;
-
-    const headers = {
-        Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
-        'Content-Type': 'application/json',
-        Version: '2021-07-28'
-    };
-
-    const url = `${HIGHLEVEL_API_URL}/contacts/${encodeURIComponent(contactId)}/notes`;
-    try {
-        const payload = { userId, body: text }
-        const response = await axios.post(url, payload, { headers });
-        console.log(response);
-
-    } catch (err) {
-        log.warn('createNote url=%s, error=%s', url, err.toString());
-    }
-}
-
-function shapeNotes(notes) {
-    return (notes || []).map(note => {
-        return {
-            text: note.body,
-            createdAt: new Date(note.dateAdded),
-            foreignUserId: note.userId,
-            foreignContactId: note.contactId,
-            foreignId: note.id
-        }
-    });
-}
 export async function getAllNotes(contactId) {
     const headers = {
         Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
@@ -140,7 +81,7 @@ export async function getAllNotes(contactId) {
     const url = `${HIGHLEVEL_API_URL}/contacts/${encodeURIComponent(contactId)}/notes`;
     try {
         const response = await axios.get(url, { headers });
-        return shapeNotes(response?.data?.notes);
+        return response?.data?.notes;
     } catch (err) {
         log.warn('retrieveHighlevelCustomFields url=%s, error=%s', url, err.toString());
     }
@@ -212,6 +153,7 @@ export async function getAllConversations(locationId = HIGHLEVEL_LOCATION_ID) {
             const conversations = data?.conversations || data?.items || data?.data || data;
             if (Array.isArray(conversations)) {
                 ALL_CONVERSATIONS.push(...conversations);
+            } else {
                 return ALL_CONVERSATIONS;
             }
             if (total === -1) {
@@ -246,7 +188,7 @@ async function getOpportunities() {
         Version: '2021-07-28'
     };
     let page = 1;
-    const pageSize = 100;    
+    const pageSize = 100;
     let opportunities = [];
     while (true) {
         const url = `${HIGHLEVEL_API_URL}/opportunities/search?location_id=${HIGHLEVEL_LOCATION_ID}&page=${page}&limit=${pageSize}`;
@@ -254,6 +196,9 @@ async function getOpportunities() {
             const response = await axios.get(url, { headers });
             if (response.status === 200) {
                 if (!Array.isArray(response?.data?.opportunities)) {
+                    return opportunities;
+                }
+                if (response?.data?.opportunities?.length === 0) {
                     return opportunities;
                 }
                 opportunities = opportunities.concat(response?.data?.opportunities || []);
@@ -271,6 +216,7 @@ async function getOpportunities() {
     return null;
 }
 
+
 export async function getCalendars(locationId = HIGHLEVEL_LOCATION_ID) {
     const headers = {
         Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
@@ -279,6 +225,7 @@ export async function getCalendars(locationId = HIGHLEVEL_LOCATION_ID) {
     };
     const url = `${HIGHLEVEL_API_URL}/calendars/?locationId=${encodeURIComponent(locationId)}`
     try {
+        log.debug('getCalendars url=%s', url);
         const response = await axios.get(url, { headers });
         const calendars = response?.data?.calendars || response?.data;
         if (!Array.isArray(calendars)) {
@@ -334,7 +281,7 @@ async function getAppointmentsForCalendar(
     params.set('startTime', startTime.getTime());
     params.set('endTime', endTime.getTime());
     const query = params.toString();
-    const url =  `${baseUrl}/calendars/events${query ? `?${query}` : ''}`;
+    const url = `${baseUrl}/calendars/events${query ? `?${query}` : ''}`;
     try {
         const response = await axios.get(url, { headers });
         const events = response?.data?.events || response?.data?.calendar_events || response?.data || [];
@@ -361,30 +308,29 @@ function filterAppointmentEvents(events) {
     if (!Array.isArray(events)) {
         return [];
     }
-    return events.filter((event) => {
-        console.log(event);
-        const type = `${event?.type || event?.eventType || event?.calendarEventType || ''}`.toLowerCase();
-        if (type) {
-            return type.includes('appointment');
-        }
-        if (typeof event?.isAppointment === 'boolean') {
-            return event.isAppointment;
-        }
-        return Boolean(event?.appointmentStatus);
-    });
+    return events;
+    // return events.filter((event) => {
+    //     const type = `${event?.type || event?.eventType || event?.calendarEventType || ''}`.toLowerCase();
+    //     if (type) {
+    //         return type.includes('appointment');
+    //     }
+    //     if (typeof event?.isAppointment === 'boolean') {
+    //         return event.isAppointment;
+    //     }
+    //     return Boolean(event?.appointmentStatus);
+    // });
 }
 
 function shapeOpportunityCustomFields(opportunity, customFieldMap) {
-    const values = opportunity?.customFields || {};
-    if (!values || typeof values !== 'object') {
-        return {};
+    if (!Array.isArray(opportunity?.customFields)) {
+        return [];
     }
-    return Object.entries(values).reduce((acc, [fieldId, fieldValue]) => {
-        const fieldDef = customFieldMap?.[fieldId];
-        const key = fieldDef?.name || fieldId;
-        acc[key] = fieldValue;
-        return acc;
-    }, {});
+    opportunity?.customFields.forEach(customField => {
+        const fieldDef = customFieldMap?.[customField.id];
+        const key = fieldDef?.name || customField.id;
+        customField.name = key;
+    });
+    return opportunity?.customFields || [];
 }
 
 function shapeContactCustomFields(contact, customFieldMap) {
@@ -410,9 +356,9 @@ async function getOpportunitiesWithCustomFields() {
     }
     const opportunitiesWithFields = opportunities.map((opportunity) => ({
         ...opportunity,
-        customFieldsNamed: shapeOpportunityCustomFields(opportunity, customFieldMap)
+        customFields: shapeOpportunityCustomFields(opportunity, customFieldMap)
     }));
-    return { opportunities: opportunitiesWithFields, customFieldMap: customFieldMap || {} };
+    return { opportunities: opportunitiesWithFields, opportunityCustomFieldMap: customFieldMap || {} };
 }
 
 export async function getContactsWithCustomFields(url) {
@@ -430,14 +376,14 @@ export async function getContactsWithCustomFields(url) {
     return { contacts: contactsWithFields, customFieldMap: customFieldMap || {} };
 }
 
-let totalLoaded = 0;
-export async function importAllHighLevelContacts(url) {
+export async function importAllHighLevelContacts(url, ALL_CONTACTS, customFieldMap) {
     const headers = {
         Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
         'Content-Type': 'application/json',
         Version: '2021-07-28'
     };
-    let ALL_CONTACTS = [];
+    ALL_CONTACTS = ALL_CONTACTS || [];
+    customFieldMap = customFieldMap || await retrieveHighlevelCustomFields('contact');
     url = url || `${HIGHLEVEL_API_URL}/contacts?limit=100&locationId=${HIGHLEVEL_LOCATION_ID}`;
     url = url.replace('http:', 'https:');
     try {
@@ -445,34 +391,44 @@ export async function importAllHighLevelContacts(url) {
         if (response.status === 200) {
             const contacts = response?.data?.contacts;
             if (Array.isArray(contacts) && contacts.length > 0) {
-                totalLoaded += contacts.length;
-                log.debug('importAllHighLevelContacts totalLoaded=%s', totalLoaded);
-                ALL_CONTACTS = ALL_CONTACTS.concat(contacts);
+                contacts.forEach(contact => {
+                    (contact.customFields || []).forEach(customField => {
+                        customField.name = customFieldMap[customField.id]?.name || customField.id;
+                    });
+                });
+                ALL_CONTACTS.push(...contacts);
+                log.debug('importAllHighLevelContacts totalLoaded=%s', ALL_CONTACTS.length);
                 if (response?.data?.meta?.nextPageUrl) {
                     await delay();
-                    await importAllHighLevelContacts(response?.data?.meta?.nextPageUrl);
+                    await importAllHighLevelContacts(response?.data?.meta?.nextPageUrl, ALL_CONTACTS, customFieldMap);
                 }
             }
         }
     } catch (err) {
         log.warn('importAllHighLevelContacts url=%s, error=%s', url, err.toString());
     }
-    return ALL_CONTACTS;
+    return {customFieldMap, contacts: ALL_CONTACTS};
 }
 
 setTimeout(async () => {
-    // const contacts = await importAllHighLevelContacts();
-    // const users = await getUsers();
-    // const opportunities = await getOpportunitiesWithCustomFields();
-    // const calendars = await getCalendars();
-    // const stored = await storeGhlData({
-    //     contacts,
-    //     users,
-    //     opportunities: opportunities?.opportunities || opportunities,
-    //     calendars
-    // });
-    // log.info('Stored GHL data %o', stored);
-    // console.log(opportunities.opportunities.length);
-    console.log((await getAllConversations())[0]);
+    try {
+        const {opportunities, opportunityCustomFieldMap} = await getOpportunitiesWithCustomFields();
+        const {contacts, customFieldMap} = await importAllHighLevelContacts();
+        const users = await getUsers();
+        const calendars = await getCalendars();
+        const conversations = await getAllConversations();
+        const stored = await storeGhlData({
+            contacts,
+            users,
+            opportunities,
+            calendars,
+            conversations,
+            customFields: [{id:'contact', contact: customFieldMap}, {id:'opportunity', opportunity: opportunityCustomFieldMap}  ]
+        });
+        log.info('Stored GHL data %o', stored);
+    } catch (err) {
+        log.error('Error storing GHL data %o', err);
+    } finally {
+        process.exit(0);
+    }
 }, 2000)
-

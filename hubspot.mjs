@@ -5,6 +5,91 @@ const hubspotClient = new Client({
     accessToken: process.env.HUBSPOT_ACCESS_TOKEN,
 });
 
+const CONTACT_OBJECT_TYPE = "contacts";
+const GHL_ID_PROPERTY = "ghl_contact_id";
+
+function toHubspotPropertyName(name) {
+    return `${name}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 50);
+}
+
+async function ensureContactProperty({ name, label, type = "string", fieldType = "text" }) {
+    try {
+        await hubspotClient.crm.properties.coreApi.getByName(CONTACT_OBJECT_TYPE, name);
+        return;
+    } catch (err) {
+        const status = err?.code || err?.response?.statusCode || err?.response?.status;
+        if (status && status !== 404) {
+            throw err;
+        }
+    }
+    await hubspotClient.crm.properties.coreApi.create(CONTACT_OBJECT_TYPE, {
+        name,
+        label,
+        type,
+        fieldType
+    });
+}
+
+async function ensureGhlCustomFields(customFields = []) {
+    await ensureContactProperty({
+        name: GHL_ID_PROPERTY,
+        label: "GHL Contact ID",
+        type: "string",
+        fieldType: "text"
+    });
+    for (const field of customFields) {
+        const propName = toHubspotPropertyName(field?.name || "custom");
+        const label = field?.name || "GHL Custom Field";
+        await ensureContactProperty({
+            name: propName,
+            label,
+            type: "string",
+            fieldType: "text"
+        });
+    }
+}
+
+function mapGhlContactToHubspotProperties(ghlContact) {
+    const properties = {
+        email: ghlContact.email || undefined,
+        firstname: ghlContact.firstNameRaw || ghlContact.firstName || undefined,
+        lastname: ghlContact.lastNameRaw || ghlContact.lastName || undefined,
+        phone: ghlContact.phone || undefined,
+        company: ghlContact.companyName || undefined,
+        address: ghlContact.address1 || undefined,
+        city: ghlContact.city || undefined,
+        state: ghlContact.state || undefined,
+        zip: ghlContact.postalCode || undefined,
+        country: ghlContact.country || undefined,
+        website: ghlContact.website || undefined,
+        [GHL_ID_PROPERTY]: ghlContact.id || undefined
+    };
+    for (const field of ghlContact.customFields || []) {
+        const propName = toHubspotPropertyName(field?.name || "custom");
+        let value = field?.value;
+        if (Array.isArray(value)) {
+            value = value.join(", ");
+        }
+        if (value !== undefined && value !== null) {
+            properties[propName] = String(value);
+        }
+    }
+    return properties;
+}
+
+export async function upsertGhlContact(ghlContact) {
+    if (!ghlContact?.email) {
+        throw new Error("GHL contact email is required to upsert in HubSpot");
+    }
+    await ensureGhlCustomFields(ghlContact.customFields || []);
+    const properties = mapGhlContactToHubspotProperties(ghlContact);
+    return upsertContactByEmail(ghlContact.email, properties);
+}
+
 
 /**
  * Upsert a HubSpot contact by email.
@@ -59,12 +144,19 @@ async function upsertContactByEmail(email, properties = {}) {
 // ---- Example usage ----
 (async () => {
     try {
-        const result = await upsertContactByEmail("jane.doe@example.com", {
-            firstname: "Jane",
-            lastname: "Doe",
-            phone: "+15125551212",
-            company: "Acme Inc",
-        });
+        const ghlContact = {
+            id: "UTQ1xBkY1xiQBRF3LdlX",
+            email: "maribelmontes1118@gmail.com",
+            firstNameRaw: "Marybel",
+            lastNameRaw: "Montes",
+            companyName: "Carnitas La Fogata LLC",
+            phone: "+15055544951",
+            customFields: [
+                { name: "SF Account ID", value: "001QP00000u0f1SYAQ" },
+                { name: "Salesforce Lead ID", value: "00QPc0000093WPZMA2" }
+            ]
+        };
+        const result = await upsertGhlContact(ghlContact);
 
         console.log(result.action, result.id);
         console.log(result.properties);

@@ -98,15 +98,11 @@
                 white-space: pre-wrap;
                 word-break: break-word;
                 margin: 8px 0 0;
-                max-height: 0;
                 opacity: 0;
-                overflow: hidden;
-                transition: max-height 240ms ease, opacity 200ms ease;
+                transition: opacity 200ms ease;
             }
             .result-item[open] pre {
-                max-height: 320px;
                 opacity: 1;
-                overflow: auto;
             }
             .status {
                 font-size: 12px;
@@ -176,6 +172,27 @@
             <div class="status" id="calendars-status">Ready</div>
             <div class="results" id="calendars-results"></div>
         </details>
+        
+        <details class="entity">
+            <summary>Conversations <span id="conversations-count" class="count-pill">(0)</span></summary>
+            <div class="query-bar">
+                <input id="conversations-query" placeholder='{"status":"open"}' />
+                <button data-collection="conversations">Query</button>
+            </div>
+            <div class="status" id="conversations-status">Ready</div>
+            <div class="results" id="conversations-results"></div>
+        </details>
+
+        <details class="entity">
+            <summary>Custom Fields <span id="customfields-count" class="count-pill">(0)</span></summary>
+            <div class="query-bar">
+                <input id="customfields-query" placeholder='{"model":"contact"}' />
+                <button data-collection="customfields">Query</button>
+            </div>
+            <div class="status" id="customfields-status">Ready</div>
+            <div class="results" id="customfields-results"></div>
+        </details>
+
         </div>
 
         <script>
@@ -183,7 +200,9 @@
                 contacts: { input: 'contacts-query', results: 'contacts-results', status: 'contacts-status', count: 'contacts-count' },
                 users: { input: 'users-query', results: 'users-results', status: 'users-status', count: 'users-count' },
                 opportunities: { input: 'opportunities-query', results: 'opportunities-results', status: 'opportunities-status', count: 'opportunities-count' },
-                calendars: { input: 'calendars-query', results: 'calendars-results', status: 'calendars-status', count: 'calendars-count' }
+                calendars: { input: 'calendars-query', results: 'calendars-results', status: 'calendars-status', count: 'calendars-count' },
+                conversations: { input: 'conversations-query', results: 'conversations-results', status: 'conversations-status', count: 'conversations-count' },
+                customfields: { input: 'customfields-query', results: 'customfields-results', status: 'customfields-status', count: 'customfields-count' }
             };
 
             function renderResults(collection, items) {

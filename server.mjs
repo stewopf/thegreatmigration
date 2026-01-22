@@ -11,6 +11,10 @@ const ALLOWED_COLLECTIONS = new Set([
     'users',
     'opportunities',
     'calendars'
+    ,
+    'conversations',
+    'customfields',
+    'locations'
 ]);
 
 let mongoClient;
