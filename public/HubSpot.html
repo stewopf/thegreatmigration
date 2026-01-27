@@ -128,6 +128,16 @@
                 border-radius: 8px;
                 background: rgba(15, 23, 42, 0.35);
             }
+            .table-wrap + .table-wrap {
+                margin-top: 16px;
+            }
+            .section-title {
+                margin: 0 0 8px;
+                font-size: 14px;
+                color: var(--muted);
+                font-weight: 600;
+                letter-spacing: 0.2px;
+            }
             table {
                 width: 100%;
                 border-collapse: collapse;
@@ -149,6 +159,14 @@
                 text-align: center;
                 padding: 16px;
                 color: var(--muted);
+            }
+            select {
+                width: 100%;
+                padding: 6px 8px;
+                border-radius: 6px;
+                border: 1px solid var(--border);
+                background: rgba(15, 23, 42, 0.35);
+                color: var(--text);
             }
             @media (max-width: 720px) {
                 body {
@@ -199,12 +217,45 @@
                     </table>
                 </div>
             </details>
+            <details class="entity">
+                <summary>
+                    <span>Custom Fields</span>
+                    <span class="summary-actions">
+                        <span id="customfields-count" class="count-pill">(0)</span>
+                        <button type="button" class="action-btn" data-action="customfields-refresh">Refresh</button>
+                    </span>
+                </summary>
+                <div class="status" id="customfields-status">Loading...</div>
+                <div id="customfields-container">
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Data Type</th>
+                                    <th>Destination</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="empty-state" colspan="3">Loading custom fields...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
         </div>
         <script>
             const statusEl = document.getElementById('hubspot-users-status');
             const countEl = document.getElementById('hubspot-users-count');
             const bodyEl = document.getElementById('hubspot-users-body');
-            const actionButtons = document.querySelectorAll('button[data-action]');
+            const actionButtons = document.querySelectorAll('button[data-action="refresh"], button[data-action="delete"]');
+            const customFieldsStatusEl = document.getElementById('customfields-status');
+            const customFieldsCountEl = document.getElementById('customfields-count');
+            const customFieldsContainerEl = document.getElementById('customfields-container');
+            const customFieldsRefreshBtn = document.querySelector('button[data-action="customfields-refresh"]');
+            const destinations = ['Contact', 'Deal', 'CSAT'];
 
             function renderRows(users) {
                 bodyEl.innerHTML = '';
@@ -254,6 +305,119 @@
                 }
             }
 
+            async function loadCustomFields() {
+                customFieldsStatusEl.textContent = 'Loading...';
+                try {
+                    const response = await fetch('/api/customfields/query', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query: {}, limit: 0 })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        customFieldsStatusEl.textContent = data?.error || 'Request failed';
+                        return;
+                    }
+                    const items = data.items || [];
+                    const renderedCount = renderCustomFields(items);
+                    customFieldsCountEl.textContent = `(${renderedCount})`;
+                    customFieldsStatusEl.textContent = `Showing ${renderedCount} field(s)`;
+                } catch (err) {
+                    customFieldsStatusEl.textContent = err.message;
+                }
+            }
+
+            function getFieldContainer(doc) {
+                if (doc?.id && doc[doc.id] && typeof doc[doc.id] === 'object') {
+                    return { name: doc.id, fields: doc[doc.id] };
+                }
+                const fallbackKey = Object.keys(doc || {}).find((key) => {
+                    if (key === '_id' || key === 'id') return false;
+                    return typeof doc[key] === 'object';
+                });
+                if (fallbackKey) {
+                    return { name: fallbackKey, fields: doc[fallbackKey] };
+                }
+                return null;
+            }
+
+            function renderCustomFields(documents) {
+                customFieldsContainerEl.innerHTML = '';
+                let total = 0;
+                if (!documents.length) {
+                    customFieldsContainerEl.innerHTML = '<div class="table-wrap"><table><tbody><tr><td class="empty-state" colspan="3">No custom fields found.</td></tr></tbody></table></div>';
+                    return total;
+                }
+                documents.forEach((doc) => {
+                    const container = getFieldContainer(doc);
+                    if (!container) {
+                        return;
+                    }
+                    const fields = Object.values(container.fields || {}).filter((field) => field && typeof field === 'object');
+                    total += fields.length;
+                    const section = document.createElement('div');
+                    section.innerHTML = `
+                        <div class="section-title">${container.name}</div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Data Type</th>
+                                        <th>Destination</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${fields.length ? fields.map((field) => {
+                                        const destination = field?.destination || '';
+                                        return `
+                                            <tr>
+                                                <td>${field?.name ?? '-'}</td>
+                                                <td>${field?.dataType ?? '-'}</td>
+                                                <td>
+                                                    <select data-doc-id="${doc?._id ?? ''}" data-field-id="${field?.id ?? ''}" data-model="${field?.model ?? container.name}">
+                                                        <option value="">Select...</option>
+                                                        ${destinations.map((item) => `
+                                                            <option value="${item}" ${destination === item ? 'selected' : ''}>${item}</option>
+                                                        `).join('')}
+                                                    </select>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('') : '<tr><td class="empty-state" colspan="3">No fields found.</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+                    customFieldsContainerEl.appendChild(section);
+                });
+                return total;
+            }
+
+            async function updateCustomFieldDestination(documentId, fieldId, model, destination) {
+                if (!documentId || !fieldId) return;
+                try {
+                    const response = await fetch('/api/customfields/destination', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            documentId,
+                            fieldId,
+                            model,
+                            destination: destination || null
+                        })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        customFieldsStatusEl.textContent = data?.error || 'Update failed';
+                    } else {
+                        customFieldsStatusEl.textContent = 'Destination updated';
+                    }
+                } catch (err) {
+                    customFieldsStatusEl.textContent = err.message;
+                }
+            }
+
             async function runAction(action) {
                 actionButtons.forEach((button) => {
                     button.disabled = true;
@@ -282,7 +446,25 @@
                 });
             });
 
+            if (customFieldsRefreshBtn) {
+                customFieldsRefreshBtn.addEventListener('click', () => {
+                    loadCustomFields();
+                });
+            }
+
+            customFieldsContainerEl.addEventListener('change', (event) => {
+                const select = event.target.closest('select[data-field-id]');
+                if (!select) return;
+                updateCustomFieldDestination(
+                    select.dataset.docId,
+                    select.dataset.fieldId,
+                    select.dataset.model,
+                    select.value
+                );
+            });
+
             loadHubSpotUsers();
+            loadCustomFields();
         </script>
     </body>
 </html>

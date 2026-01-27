@@ -1,5 +1,5 @@
 import express from 'express';
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -260,6 +260,31 @@ app.post('/api/hubspot/users/refresh', async (req, res) => {
     try {
         await runUpdateUserMapping({ merge: true });
         return res.json({ status: 'ok', message: 'HubSpot user mapping refreshed.' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/customfields/destination', async (req, res) => {
+    const { documentId, fieldId, model, destination } = req.body || {};
+    if (!documentId || !fieldId) {
+        return res.status(400).json({ error: 'documentId and fieldId are required' });
+    }
+    const updateModel = model || 'contact';
+    const updatePath = `${updateModel}.${fieldId}.destination`;
+    try {
+        const db = await getDb();
+        const filter = ObjectId.isValid(documentId)
+            ? { _id: new ObjectId(documentId) }
+            : { _id: documentId };
+        const result = await db.collection('customfields').updateOne(
+            filter,
+            { $set: { [updatePath]: destination || null } }
+        );
+        if (!result.matchedCount) {
+            return res.status(404).json({ error: 'Custom field document not found' });
+        }
+        return res.json({ status: 'ok' });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
