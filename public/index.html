@@ -34,6 +34,27 @@
                 font-size: 28px;
                 letter-spacing: 0.2px;
             }
+            .tabs {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 22px;
+            }
+            .tab-link {
+                text-decoration: none;
+                color: var(--text);
+                padding: 8px 16px;
+                border-radius: 999px;
+                border: 1px solid var(--border);
+                background: var(--panel);
+                transition: border-color 0.2s ease, background 0.2s ease;
+            }
+            .tab-link:hover {
+                border-color: var(--accent-dark);
+            }
+            .tab-link.active {
+                border-color: var(--accent);
+                background: rgba(240, 106, 75, 0.2);
+            }
             .subtitle {
                 margin-bottom: 28px;
                 color: var(--muted);
@@ -197,6 +218,10 @@
         </style>
     </head>
     <body>
+        <div class="tabs">
+            <a class="tab-link active" href="index.html">GoHighLevel Viewer</a>
+            <a class="tab-link" href="HubSpot.html">HubStop Migration</a>
+        </div>
         <h1>GoHighLevel Data Viewer</h1>
         <div class="subtitle">Query and explore your synced entities in real time.</div>
 

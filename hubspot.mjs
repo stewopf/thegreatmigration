@@ -1,4 +1,9 @@
 import { Client } from "@hubspot/api-client";
+import {
+    createHubspotPropertyFromGhlField as createHubspotPropertyFromGhlFieldInternal,
+    ensureGhlCustomFields,
+    toHubspotPropertyName
+} from "./hubspot/customFields/transferCustomFields.mjs";
 
 
 const hubspotClient = new Client({
@@ -7,51 +12,6 @@ const hubspotClient = new Client({
 
 const CONTACT_OBJECT_TYPE = "contacts";
 const GHL_ID_PROPERTY = "ghl_contact_id";
-
-function toHubspotPropertyName(name) {
-    return `${name}`
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "")
-        .slice(0, 50);
-}
-
-async function ensureContactProperty({ name, label, type = "string", fieldType = "text" }) {
-    try {
-        await hubspotClient.crm.properties.coreApi.getByName(CONTACT_OBJECT_TYPE, name);
-        return;
-    } catch (err) {
-        const status = err?.code || err?.response?.statusCode || err?.response?.status;
-        if (status && status !== 404) {
-            throw err;
-        }
-    }
-    await hubspotClient.crm.properties.coreApi.create(CONTACT_OBJECT_TYPE, {
-        name,
-        label,
-        type,
-        fieldType
-    });
-}
-
-async function ensureGhlCustomFields(customFields = []) {
-    await ensureContactProperty({
-        name: GHL_ID_PROPERTY,
-        label: "GHL Contact ID",
-        type: "string",
-        fieldType: "text"
-    });
-    for (const field of customFields) {
-        const propName = toHubspotPropertyName(field?.name || "custom");
-        const label = field?.name || "GHL Custom Field";
-        await ensureContactProperty({
-            name: propName,
-            label,
-            type: "string",
-            fieldType: "text"
-        });
-    }
-}
 
 function mapGhlContactToHubspotProperties(ghlContact) {
     const properties = {
@@ -85,9 +45,13 @@ export async function upsertGhlContact(ghlContact) {
     if (!ghlContact?.email) {
         throw new Error("GHL contact email is required to upsert in HubSpot");
     }
-    await ensureGhlCustomFields(ghlContact.customFields || []);
+    await ensureGhlCustomFields(hubspotClient, ghlContact.customFields || []);
     const properties = mapGhlContactToHubspotProperties(ghlContact);
     return upsertContactByEmail(ghlContact.email, properties);
+}
+
+export async function createHubspotPropertyFromGhlField(ghlField, hubspotObjectType) {
+    return createHubspotPropertyFromGhlFieldInternal(hubspotClient, ghlField, hubspotObjectType);
 }
 
 

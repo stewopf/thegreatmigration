@@ -3,6 +3,7 @@ import { MongoClient } from 'mongodb';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { runUpdateUserMapping } from './hubspot/users/updateUserMapping.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -214,12 +215,18 @@ app.post('/api/:collection/query', async (req, res) => {
         return res.status(400).json({ error: 'Unknown collection' });
     }
     const query = req.body?.query || {};
+    const rawLimit = req.body?.limit;
+    const limit = Number.isFinite(rawLimit) ? rawLimit : Number(rawLimit ?? 10);
     if (query && typeof query !== 'object') {
         return res.status(400).json({ error: 'Query must be an object' });
     }
     try {
         const db = await getDb();
-        const docs = await db.collection(collection).find(query).limit(10).toArray();
+        const cursor = db.collection(collection).find(query);
+        if (Number.isFinite(limit) && limit > 0) {
+            cursor.limit(limit);
+        }
+        const docs = await cursor.toArray();
         return res.json({ count: docs.length, items: docs });
     } catch (err) {
         return res.status(500).json({ error: err.message });
@@ -235,6 +242,24 @@ app.get('/api/:collection/count', async (req, res) => {
         const db = await getDb();
         const count = await db.collection(collection).countDocuments();
         return res.json({ count });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/hubspot/users/delete', async (req, res) => {
+    try {
+        await runUpdateUserMapping({ deleteMode: true });
+        return res.json({ status: 'ok', message: 'HubSpot user mapping deleted.' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/hubspot/users/refresh', async (req, res) => {
+    try {
+        await runUpdateUserMapping({ merge: true });
+        return res.json({ status: 'ok', message: 'HubSpot user mapping refreshed.' });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
