@@ -18,6 +18,8 @@
                 --muted: #c7d2ea;
                 --accent: #f06a4b;
                 --accent-dark: #d9563d;
+                --success: #4ade80;
+                --warning: #fbbf24;
                 --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
             }
             body {
@@ -83,6 +85,10 @@
             .query-bar button:hover {
                 transform: translateY(-1px);
             }
+            .query-bar button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
             .results {
                 display: grid;
                 gap: 8px;
@@ -116,6 +122,68 @@
                 font-size: 12px;
                 border: 1px solid rgba(240, 106, 75, 0.35);
             }
+            .comparison-section {
+                margin-top: 12px;
+                padding: 12px;
+                border-radius: 6px;
+                background: rgba(15, 23, 42, 0.4);
+                border: 1px solid var(--border);
+            }
+            .comparison-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 8px;
+            }
+            .comparison-stats {
+                display: flex;
+                gap: 16px;
+                margin-bottom: 8px;
+                font-size: 14px;
+            }
+            .stat-item {
+                display: flex;
+                flex-direction: column;
+            }
+            .stat-label {
+                font-size: 11px;
+                color: var(--muted);
+                margin-bottom: 2px;
+            }
+            .stat-value {
+                font-weight: 600;
+                font-size: 16px;
+            }
+            .match-indicator {
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            .match-indicator.match {
+                background: rgba(74, 222, 128, 0.2);
+                color: var(--success);
+                border: 1px solid rgba(74, 222, 128, 0.3);
+            }
+            .match-indicator.mismatch {
+                background: rgba(251, 191, 36, 0.2);
+                color: var(--warning);
+                border: 1px solid rgba(251, 191, 36, 0.3);
+            }
+            .missing-ids {
+                margin-top: 8px;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            .missing-id {
+                padding: 4px 8px;
+                margin: 2px 0;
+                background: rgba(240, 106, 75, 0.1);
+                border-radius: 4px;
+                font-family: monospace;
+                font-size: 11px;
+                border: 1px solid rgba(240, 106, 75, 0.2);
+            }
             @keyframes resultFadeIn {
                 from {
                     opacity: 0;
@@ -138,8 +206,10 @@
             <div class="query-bar">
                 <input id="contacts-query" placeholder='{"email":"test@example.com"}' />
                 <button data-collection="contacts">Query</button>
+                <button data-collection="contacts" data-action="compare" class="compare-btn">Compare with GHL</button>
             </div>
             <div class="status" id="contacts-status">Ready</div>
+            <div class="comparison-section" id="contacts-comparison" style="display: none;"></div>
             <div class="results" id="contacts-results"></div>
         </details>
 
@@ -148,8 +218,10 @@
             <div class="query-bar">
                 <input id="users-query" placeholder='{"name":"John"}' />
                 <button data-collection="users">Query</button>
+                <button data-collection="users" data-action="compare" class="compare-btn">Compare with GHL</button>
             </div>
             <div class="status" id="users-status">Ready</div>
+            <div class="comparison-section" id="users-comparison" style="display: none;"></div>
             <div class="results" id="users-results"></div>
         </details>
 
@@ -158,8 +230,10 @@
             <div class="query-bar">
                 <input id="opportunities-query" placeholder='{"status":"open"}' />
                 <button data-collection="opportunities">Query</button>
+                <button data-collection="opportunities" data-action="compare" class="compare-btn">Compare with GHL</button>
             </div>
             <div class="status" id="opportunities-status">Ready</div>
+            <div class="comparison-section" id="opportunities-comparison" style="display: none;"></div>
             <div class="results" id="opportunities-results"></div>
         </details>
 
@@ -168,8 +242,10 @@
             <div class="query-bar">
                 <input id="calendars-query" placeholder='{"name":"Main Calendar"}' />
                 <button data-collection="calendars">Query</button>
+                <button data-collection="calendars" data-action="compare" class="compare-btn">Compare with GHL</button>
             </div>
             <div class="status" id="calendars-status">Ready</div>
+            <div class="comparison-section" id="calendars-comparison" style="display: none;"></div>
             <div class="results" id="calendars-results"></div>
         </details>
         
@@ -178,8 +254,10 @@
             <div class="query-bar">
                 <input id="conversations-query" placeholder='{"status":"open"}' />
                 <button data-collection="conversations">Query</button>
+                <button data-collection="conversations" data-action="compare" class="compare-btn">Compare with GHL</button>
             </div>
             <div class="status" id="conversations-status">Ready</div>
+            <div class="comparison-section" id="conversations-comparison" style="display: none;"></div>
             <div class="results" id="conversations-results"></div>
         </details>
 
@@ -197,11 +275,11 @@
 
         <script>
             const collectionConfig = {
-                contacts: { input: 'contacts-query', results: 'contacts-results', status: 'contacts-status', count: 'contacts-count' },
-                users: { input: 'users-query', results: 'users-results', status: 'users-status', count: 'users-count' },
-                opportunities: { input: 'opportunities-query', results: 'opportunities-results', status: 'opportunities-status', count: 'opportunities-count' },
-                calendars: { input: 'calendars-query', results: 'calendars-results', status: 'calendars-status', count: 'calendars-count' },
-                conversations: { input: 'conversations-query', results: 'conversations-results', status: 'conversations-status', count: 'conversations-count' },
+                contacts: { input: 'contacts-query', results: 'contacts-results', status: 'contacts-status', count: 'contacts-count', comparison: 'contacts-comparison' },
+                users: { input: 'users-query', results: 'users-results', status: 'users-status', count: 'users-count', comparison: 'users-comparison' },
+                opportunities: { input: 'opportunities-query', results: 'opportunities-results', status: 'opportunities-status', count: 'opportunities-count', comparison: 'opportunities-comparison' },
+                calendars: { input: 'calendars-query', results: 'calendars-results', status: 'calendars-status', count: 'calendars-count', comparison: 'calendars-comparison' },
+                conversations: { input: 'conversations-query', results: 'conversations-results', status: 'conversations-status', count: 'conversations-count', comparison: 'conversations-comparison' },
                 customfields: { input: 'customfields-query', results: 'customfields-results', status: 'customfields-status', count: 'customfields-count' }
             };
 
@@ -227,6 +305,45 @@
             function setStatus(collection, message) {
                 const statusEl = document.getElementById(collectionConfig[collection].status);
                 statusEl.textContent = message;
+            }
+
+            function renderComparison(collection, data) {
+                const comparisonEl = document.getElementById(collectionConfig[collection].comparison);
+                if (!comparisonEl) return;
+                
+                comparisonEl.style.display = 'block';
+                comparisonEl.innerHTML = `
+                    <div class="comparison-header">
+                        <strong>Comparison with GoHighLevel</strong>
+                        <span class="match-indicator ${data.match ? 'match' : 'mismatch'}">
+                            ${data.match ? '✓ Match' : '⚠ Mismatch'}
+                        </span>
+                    </div>
+                    <div class="comparison-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">MongoDB</span>
+                            <span class="stat-value">${data.mongoCount}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">GoHighLevel</span>
+                            <span class="stat-value">${data.ghlCount}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Difference</span>
+                            <span class="stat-value" style="color: ${data.difference > 0 ? 'var(--warning)' : 'var(--success)'}">
+                                ${data.difference > 0 ? '+' : ''}${data.difference}
+                            </span>
+                        </div>
+                    </div>
+                    ${data.missingCount > 0 ? `
+                        <div style="margin-top: 8px; font-size: 12px; color: var(--muted);">
+                            Missing ${data.missingCount} record(s) in MongoDB (showing first ${data.missingIds.length}):
+                        </div>
+                        <div class="missing-ids">
+                            ${data.missingIds.map(id => `<div class="missing-id">${id}</div>`).join('')}
+                        </div>
+                    ` : ''}
+                `;
             }
 
             async function loadCounts() {
@@ -277,9 +394,35 @@
                 }
             }
 
+            async function runComparison(collection) {
+                setStatus(collection, 'Comparing with GoHighLevel...');
+                const compareBtn = document.querySelector(`button[data-collection="${collection}"][data-action="compare"]`);
+                if (compareBtn) compareBtn.disabled = true;
+                
+                try {
+                    const response = await fetch(`/api/${collection}/compare`);
+                    const data = await response.json();
+                    if (!response.ok) {
+                        setStatus(collection, data?.error || 'Comparison failed');
+                        return;
+                    }
+                    setStatus(collection, 'Comparison complete');
+                    renderComparison(collection, data);
+                } catch (err) {
+                    setStatus(collection, `Error: ${err.message}`);
+                } finally {
+                    if (compareBtn) compareBtn.disabled = false;
+                }
+            }
+
             document.querySelectorAll('button[data-collection]').forEach((button) => {
                 button.addEventListener('click', () => {
-                    runQuery(button.dataset.collection);
+                    const collection = button.dataset.collection;
+                    if (button.dataset.action === 'compare') {
+                        runComparison(collection);
+                    } else {
+                        runQuery(collection);
+                    }
                 });
             });
 
