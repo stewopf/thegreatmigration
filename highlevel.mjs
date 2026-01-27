@@ -141,40 +141,48 @@ export async function getAllConversations(locationId = HIGHLEVEL_LOCATION_ID) {
     const ALL_CONVERSATIONS = [];
     const baseUrl = `${HIGHLEVEL_API_URL || ''}`.replace(/\/+$/, '');
     const pageSize = 100;
-    let page = 1;
-    let url = `${baseUrl}/conversations/search?locationId=${encodeURIComponent(locationId)}&page=${page}&limit=${pageSize}`;
-    let nextUrl = url.replace('http:', 'https:');
     let total = -1;
-    while (nextUrl) {
+    let startAfterDate = null; // next batch: value of sort from last document
+    let batchNum = 0;
+
+    while (true) {
+        batchNum++;
+        let nextUrl = `${baseUrl}/conversations/search?locationId=${encodeURIComponent(locationId)}&limit=${pageSize}&sort=asc`;
+        if (startAfterDate != null) {
+            nextUrl += `&startAfterDate=${encodeURIComponent(startAfterDate)}`;
+        }
+        nextUrl = nextUrl.replace('http:', 'https:');
         try {
-            log.debug('getAllConversations url=%s, page=%s, total=%s', nextUrl, page, total);
+            log.debug('getAllConversations url=%s, batch=%s, total=%s', nextUrl, batchNum, total);
             const response = await axios.get(nextUrl, { headers });
             const data = response?.data || {};
             const conversations = data?.conversations || data?.items || data?.data || data;
-            if (Array.isArray(conversations)) {
-                ALL_CONVERSATIONS.push(...conversations);
-            } else {
+            if (!Array.isArray(conversations)) {
                 return ALL_CONVERSATIONS;
             }
+            ALL_CONVERSATIONS.push(...conversations);
             if (total === -1) {
-                total = data.total;
+                total = data.total ?? 0;
             }
-            total -= pageSize;
-            if (total <= 0) {
-                log.debug('getAllConversations total < 0, breaking');
-                nextUrl = null;
+            if (ALL_CONVERSATIONS.length >= total) {
+                log.debug('getAllConversations fetched all, total=%s', total);
                 break;
             }
-            page++;
-            nextUrl = `${baseUrl}/conversations/search?locationId=${encodeURIComponent(locationId)}&page=${page}&limit=${pageSize}`;
+            if (conversations.length < pageSize) {
+                log.debug('getAllConversations last batch, count=%s', conversations.length);
+                break;
+            }
+            const lastDoc = conversations[conversations.length - 1];
+            if (!Array.isArray(lastDoc.sort) || lastDoc.sort.length === 0) {
+                throw new Error(`Conversation ${lastDoc.id} missing required "sort" field for pagination`);
+            }
+            startAfterDate = lastDoc.sort[0];
             await delay();
         } catch (err) {
             const status = err?.response?.status;
             if (status !== 404) {
                 log.warn('getAllConversations url=%s, status=%s, error=%s', nextUrl, status, err.toString());
-                return ALL_CONVERSATIONS;
             }
-            log.warn('getAllConversations url=%s returned 404', nextUrl);
             break;
         }
     }
