@@ -138,6 +138,27 @@
                 font-weight: 600;
                 letter-spacing: 0.2px;
             }
+            .customfield-group {
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 12px;
+                margin-bottom: 12px;
+                background: rgba(255, 255, 255, 0.04);
+            }
+            .customfield-group summary {
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--muted);
+            }
+            .customfield-count {
+                margin-left: 8px;
+                font-size: 12px;
+                color: var(--muted);
+            }
             table {
                 width: 100%;
                 border-collapse: collapse;
@@ -357,37 +378,42 @@
                     total += fields.length;
                     const section = document.createElement('div');
                     section.innerHTML = `
-                        <div class="section-title">${container.name}</div>
-                        <div class="table-wrap">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Name</th>
-                                        <th>Data Type</th>
-                                        <th>Destination</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${fields.length ? fields.map((field) => {
-                                        const destination = field?.destination || '';
-                                        return `
-                                            <tr>
-                                                <td>${field?.name ?? '-'}</td>
-                                                <td>${field?.dataType ?? '-'}</td>
-                                                <td>
-                                                    <select data-doc-id="${doc?._id ?? ''}" data-field-id="${field?.id ?? ''}" data-model="${field?.model ?? container.name}">
-                                                        <option value="">Select...</option>
-                                                        ${destinations.map((item) => `
-                                                            <option value="${item}" ${destination === item ? 'selected' : ''}>${item}</option>
-                                                        `).join('')}
-                                                    </select>
-                                                </td>
-                                            </tr>
-                                        `;
-                                    }).join('') : '<tr><td class="empty-state" colspan="3">No fields found.</td></tr>'}
-                                </tbody>
-                            </table>
-                        </div>
+                        <details class="customfield-group">
+                            <summary>
+                                <span>${container.name}</span>
+                                <span class="customfield-count">${fields.length} field(s)</span>
+                            </summary>
+                            <div class="table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Data Type</th>
+                                            <th>Destination</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${fields.length ? fields.map((field) => {
+                                            const destination = field?.destination || '';
+                                            return `
+                                                <tr>
+                                                    <td>${field?.name ?? '-'}</td>
+                                                    <td>${field?.dataType ?? '-'}</td>
+                                                    <td>
+                                                        <select data-doc-id="${doc?._id ?? ''}" data-field-id="${field?.id ?? ''}" data-model="${field?.model ?? container.name}">
+                                                            <option value="">Select...</option>
+                                                            ${destinations.map((item) => `
+                                                                <option value="${item}" ${destination === item ? 'selected' : ''}>${item}</option>
+                                                            `).join('')}
+                                                        </select>
+                                                    </td>
+                                                </tr>
+                                            `;
+                                        }).join('') : '<tr><td class="empty-state" colspan="3">No fields found.</td></tr>'}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </details>
                     `;
                     customFieldsContainerEl.appendChild(section);
                 });
