@@ -454,7 +454,7 @@ export const CUSTOM_FIELDS = [
             label: "SF Industry",
             type: "string",
             fieldType: "text",
-            groupName: WEBSITE_GROUP_NAME,
+            groupName: COMPANY_GROUP_NAME,
         },
         {
             name: "via_industry",
@@ -515,13 +515,12 @@ export const CUSTOM_FIELDS = [
             groupName: WEBSITE_GROUP_NAME,
         },
 
-        // TODO: if the entity/contact
         {
             name: "apex_id",
             label: "Apex Id",
             type: "string",
             fieldType: "text",
-            groupName: WEBSITE_GROUP_NAME,
+            groupName: COMPANY_GROUP_NAME,
         },
     ]},
 ];
