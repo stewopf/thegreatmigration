@@ -55,6 +55,94 @@ async function recordFailedMigration(db, {
     );
 }
 
+export async function deleteHubspotObjectsByImportTag(
+    hubspotClient,
+    { importTag = "GHL_MIGRATION", dryRun = false } = {}
+) {
+    if (!hubspotClient) {
+        throw new Error("hubspotClient is required");
+    }
+    const results = {
+        contacts: { scanned: 0, deleted: 0 },
+        companies: { scanned: 0, deleted: 0 }
+    };
+    await deleteByImportTagForObjectType(
+        hubspotClient,
+        "contacts",
+        importTag,
+        results.contacts,
+        dryRun
+    );
+    await deleteByImportTagForObjectType(
+        hubspotClient,
+        "companies",
+        importTag,
+        results.companies,
+        dryRun
+    );
+    return results;
+}
+
+async function deleteByImportTagForObjectType(
+    hubspotClient,
+    objectType,
+    importTag,
+    counters,
+    dryRun
+) {
+    let after;
+    do {
+        const searchRequest = {
+            filterGroups: [
+                {
+                    filters: [
+                        {
+                            propertyName: "import_tag",
+                            operator: "EQ",
+                            value: importTag
+                        }
+                    ]
+                }
+            ],
+            limit: 100,
+            after
+        };
+        const searchResponse = await hubspotClient.crm[objectType].searchApi.doSearch(searchRequest);
+        const results = Array.isArray(searchResponse?.results) ? searchResponse.results : [];
+        counters.scanned += results.length;
+        if (!dryRun && results.length > 0) {
+            const inputs = results.map((record) => ({ id: record.id }));
+            const batchApi = hubspotClient.crm[objectType]?.batchApi;
+            if (batchApi?.archive) {
+                await batchApi.archive({ inputs });
+                counters.deleted += inputs.length;
+            } else {
+                for (const record of results) {
+                    await hubspotClient.crm[objectType].basicApi.archive(record.id);
+                    counters.deleted += 1;
+                }
+            }
+        }
+        after = searchResponse?.paging?.next?.after;
+    } while (after);
+}
+
+async function getPrimaryCompanyContactAssociationType(hubspotClient) {
+    const response = await hubspotClient.crm.associations.v4.schema.definitionsApi.getAll("companies", "contacts");
+    const results = Array.isArray(response?.results) ? response.results : response;
+    const primary = results?.find((item) => {
+        const label = String(item?.label || "").toLowerCase();
+        return label === "primary";
+    });
+    if (!primary) {
+        return null;
+    }
+    return {
+        associationCategory: primary?.category || "HUBSPOT_DEFINED",
+        associationTypeId: primary?.typeId
+    };
+}
+
 async function findAssignedToUser(db, ghlContact) {
     if (!db || !ghlContact) {
         return null;
@@ -65,7 +153,83 @@ async function findAssignedToUser(db, ghlContact) {
     }
     return db.collection("users").findOne({ id: userId });
 }
+function normalizeEnumerationValue(value) {
+    if (! value) return value;
+    value = value.toString().trim();
+    value = value
+        .replace(/[^a-z0-9]+/gi, "_")
+        .replace(/^_+|_+$/g, "")
+        .toLowerCase();
+    return value;
+}
 
+function capitalizeFirstCharacter(value) {
+    if (!value) return value;
+    const trimmed = value.toString().trim();
+    if (!trimmed) return value;
+    return trimmed.split(' ').map(v =>`${v.charAt(0).toUpperCase()}${v.slice(1)}`).join(' ');
+}
+function extractCompanyProperties(company, ghlContact) {
+    const result = {name:company, website_url:ghlContact.website, import_tag: "GHL_MIGRATION"};
+    ghlContact.customFields?.forEach((customField) => {
+        switch (customField.id) {
+            case "gyxG6J8U3DjXt4yfOd1R": 
+                result.ghl_created_date = customField.value ? new Date(customField.value).toISOString() : undefined;
+                break;
+            case 'Iq99flttTMyx0RKzlYY5': 
+                result.services_offered = customField.value;
+                break;
+            case '8fOwdZOm0bylfiaqOOkt':
+                result.hours_of_operation = customField.value;
+                break;
+            case 'G5kwvVM0yZotFHDzTtU0':
+                result.sf_reason_lost = customField.value;
+                break;
+            case 'zGWKpJ5VQTyE2CY2lIGX':
+                result.contracted_services = Array.isArray(customField.value) ? customField.value.map(normalizeEnumerationValue).join(';') : normalizeEnumerationValue(customField.value);
+                break;
+            case 'cbD2OOhWDXDep6Bjw799':
+                result.monthly_gross_sales = customField.value;
+                break;
+            case '9eHyavp1jfJTT7IJGRp8':
+                result.time_in_business_at_creation = customField.value;
+                break;
+            case '5yPFgdkdeqyTDefOtsZs':
+                result.apex_new_ach_request_url = customField.value;
+                break;
+            case 'DlGjoPpF3vQzaav0Ui6u':
+                result.apex_new_rcc_request_url = customField.value;
+                break;
+            case 'xgqyCCP2GeDdydHfElRJ':
+                result.apex_new_card_request_url = customField.value;
+                break;
+            case 'T8Hpdsu1W5gErAwbXJH6':
+                result.existing_logo = customField.value === 'Yes';
+                break;
+            case 'LC2oRMOXgxnGYI6yKcth':
+                result.preferred_website_language = customField.value === 'Spanish' ? 'es' : 'en';
+                break;
+            case 'YW4GIuaBiGVbDJo7aPae': 
+                result.website_features = Array.isArray(customField.value) ? customField.value.map(normalizeEnumerationValue).join(';') : normalizeEnumerationValue(customField.value);
+                break;
+            case 'ZTCs1zCNZ19KZNkTx1hW':
+                result.cancellation_reason = customField.value;
+                break;
+            case '509l4Gl65IKHoi8KpHMw':
+                result.sf_industry = customField.value;
+                break;
+            case '4wAAp50m1fwku7MwfiRU':
+                result.via_industry = normalizeEnumerationValue(customField.value);
+                break;
+            case 'Y52V3yr8R70CnDpfCEPJ':
+                result.apex_id = customField.value;
+                break;
+            default:
+                break;
+        }
+    });
+    return result;
+}
 /**
  * Create a base HubSpot contact.
  * Requires at least an email address.
@@ -75,7 +239,7 @@ export async function createBaseHubspotContact(
     hubspotClient = null,
     { dryRun = false, db = null } = {}
 ) {
-    const {
+    let {
         email,
         firstName,
         lastName,
@@ -98,11 +262,14 @@ export async function createBaseHubspotContact(
         });
         throw new Error(`email is required to create a HubSpot contact ghlContact=${JSON.stringify(ghlContact?.id)}`);
     }
-
+    email = email.toLowerCase();
+    if (! company) {
+        company = `NO-COMPANY NAME - ${firstName || ''} ${lastName || ''}`.trim();
+    }
     const baseProperties = {
         email,
-        firstname: firstName,
-        lastname: lastName,
+        firstname: capitalizeFirstCharacter(firstName),
+        lastname: capitalizeFirstCharacter(lastName),
         phone,
         company,
         address,
@@ -112,15 +279,14 @@ export async function createBaseHubspotContact(
         country,
         dateOfBirth,
         dnd,
-        ghl_contact_id: ghlContact.id
+        ghl_contact_id: ghlContact.id,
+        import_tag: "GHL_MIGRATION"
     };
     const assignedToUser = await findAssignedToUser(db, ghlContact);
     if (assignedToUser) {
-        baseProperties.assignedTo = assignedToUser?.hubSpot?.id;
+        baseProperties.hubspot_owner_id = assignedToUser?.hubSpot?.id;
     }
-    if (baseProperties.assignedTo) {
-        console.log("assignedTo", baseProperties.assignedTo);
-    }
+
     ghlContact.customFields?.forEach((customField) => {
         switch (customField.id) {
             case "g6tSBxPatzAwTtIhHVvx": // "SF Account ID"
@@ -136,7 +302,7 @@ export async function createBaseHubspotContact(
                 baseProperties[toHubspotPropertyName("smsOptIn")] = customField.value;
                 break;
             case "qUtfAwv63pRApArTvSjp":
-                baseProperties.secondaryemail = customField.value;
+                baseProperties.secondary_email = customField.value;
                 break;
             case "vGf2kz1P3ZH10TQx7U9N":
                 baseProperties.secondaryphone = customField.value;
@@ -151,17 +317,80 @@ export async function createBaseHubspotContact(
     const properties = buildBaseContactProperties(baseProperties);
 
     if (dryRun) {
-        // console.log(JSON.stringify({ ghlContact, baseProperties: properties, assignedToUser }, null, 2));
-        return { id: null, properties };
+        console.log(JSON.stringify({ ghlContact, baseProperties: properties, assignedToUser, companyProps }, null, 2));
+        return { id: null, properties, companyProps };
     }
-    process.exit(0);
     const client = hubspotClient || buildHubspotClient();
     const created = await client.crm.contacts.basicApi.create({
         properties
     });
-    return { id: created.id, properties: created.properties };
+
+    const companyProps = extractCompanyProperties(properties?.company, ghlContact);
+
+    let companyCreated = null;
+    if (created.id) {
+        companyProps.hubspot_owner_id = assignedToUser?.hubSpot?.id;
+        companyCreated = await createBaseHubspotCompany(companyProps, hubspotClient, { dryRun, db, contactId: created.id });
+    }
+    return { id: created.id, properties: created.properties, companyId: companyCreated?.id, companyProperties: companyCreated?.properties };
 }
 
+export async function createBaseHubspotCompany(
+    ghlCompany = {},
+    hubspotClient = null,
+    { dryRun = false, db = null, contactId = null } = {}
+) {
+
+
+    const companyLabel = ghlCompany.name;
+    if (!companyLabel) {
+        await recordFailedMigration(db, {
+            entityType: "company",
+            ghlId: ghlCompany?.id,
+            reason: "missing company name"
+        });
+        throw new Error(`company name is required to create a HubSpot company ghlCompany=${JSON.stringify(ghlCompany?.id)}`);
+    }
+
+    const baseProperties = buildBaseContactProperties(ghlCompany);
+
+    if (dryRun) {
+        console.log(JSON.stringify({ ghlCompany, baseProperties, contactId: contactId ? Number(contactId) : null }, null, 2));
+        return { id: null, properties: baseProperties };
+    }
+
+    const client = hubspotClient || buildHubspotClient();
+    const created = await client.crm.companies.basicApi.create({
+        properties: baseProperties
+    });
+
+    await upsertGhlHubspotIdMap(db, {
+        ghlId: ghlCompany?.id,
+        hubspotId: created?.id,
+        objectTypeId: "company"
+    });
+
+    if (contactId) {
+        let associations = [];
+        try {
+            const primaryType = await getPrimaryCompanyContactAssociationType(client);
+            if (primaryType?.associationTypeId) {
+                associations = [primaryType];
+            }
+        } catch (err) {
+            console.warn("failed to load primary association type, using default association", err?.message || err);
+        }
+        await client.crm.associations.v4.basicApi.create(
+            "companies",
+            created.id,
+            "contacts",
+            contactId,
+            associations
+        );
+    }
+
+    return { id: created.id, properties: created.properties };
+}
 async function getDb(mongoUri, dbName) {
     if (!mongoUri) {
         throw new Error("MONGO_URI is not set");
@@ -261,6 +490,7 @@ Options:
   --limit <number>         Max contacts to migrate
   --checkpoint-id <id>     Checkpoint document id
   --reset <entity>         Clear failed maps + checkpoints
+  --delete-import-tag [tag]  Delete contacts/companies with import_tag (default: GHL_MIGRATION)
   --resume                 Resume from checkpoint (default)
   --no-resume              Start from the beginning
   --dry-run                Log actions without calling HubSpot
@@ -283,7 +513,7 @@ async function resetMigrationState(db, {
         await db.collection("hubspot_transfer_checkpoints").deleteOne({ _id: checkpointId });
     } else {
         await db.collection("hubspot_transfer_checkpoints").deleteMany({});
-    }
+    }    
     console.log(`reset complete for entity: ${normalized}`);
 }
 
@@ -348,6 +578,11 @@ export async function migrateContactsToHubspot({
                 }
             } catch (err) {
                 failed += 1;
+                await recordFailedMigration(db, {
+                    entityType: "contact",
+                    ghlId: contact?.id ?? contact?._id,
+                    reason: `migration error: ${err?.message || err}`
+                });
                 console.error("contact migration failed", contact?._id, err?.message || err);
             }
             await saveCheckpoint(db, checkpointId, {
@@ -391,6 +626,16 @@ if (import.meta.url === new URL(process.argv[1], "file:").href) {
         } finally {
             await client.close();
         }
+        process.exit(0);
+    }
+    if (cli.deleteImportTag !== undefined) {
+        const importTag = cli.deleteImportTag === true ? "GHL_MIGRATION" : cli.deleteImportTag;
+        const hubspotClient = buildHubspotClient(cli.hubspotAccessToken);
+        const results = await deleteHubspotObjectsByImportTag(hubspotClient, {
+            importTag,
+            dryRun: cli.dryRun
+        });
+        console.log("delete import tag complete:", results);
         process.exit(0);
     }
     migrateContactsToHubspot({

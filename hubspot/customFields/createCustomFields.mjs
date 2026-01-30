@@ -263,12 +263,31 @@ export async function deleteHubspotCustomFields(customFields = {}) {
     const hubspotClient = buildHubspotClient();
     return deleteHubspotCustomFieldsOnObjectType(hubspotClient, customFields.objectType, customFields.fields);
 }
-const CONTACT_GROUP_NAME = "ghl_contacts";
+const CONTACT_GROUP_NAME = "via_contact_details";
 const COMPANY_GROUP_NAME = "via_business_details";
 const WEBSITE_GROUP_NAME = "via_website_details";
 
 export const CUSTOM_FIELDS = [
     {objectType: "contacts", fields: [
+        {
+            name: "import_tag",
+            label: "Import Tag",
+            type: "string",
+            fieldType: "text",
+            hidden: true,
+        },
+        {
+            name: "secondary_email",
+            label: "Secondary Email",
+            type: "string",
+            fieldType: "text", 
+        },
+        {
+            name: "secondary_phone",
+            label: "Secondary Phone",
+            type: "string",
+            fieldType: "text",
+        },
         {
             name: "ghl_contact_id",
             label: "GHL Contact ID",
@@ -328,6 +347,14 @@ export const CUSTOM_FIELDS = [
         }
     ]},
     {objectType:"company", fields: [
+        {
+            name: "import_tag",
+            label: "Import Tag",
+            type: "string",
+            fieldType: "text",
+            hidden: true,
+        },
+
         {
             name: "ghl_created_date",
             label: "Created Date",
