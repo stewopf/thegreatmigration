@@ -549,7 +549,7 @@ export const CUSTOM_FIELDS = [
             groupName: COMPANY_GROUP_NAME,
         },
     ]},
-    {objectTupe:"Deal", fields:[
+    {objectType:"deals", fields:[
         {
             name: "import_tag",
             label: "Import Tag",
@@ -572,6 +572,64 @@ export const CUSTOM_FIELDS = [
         {
             name: "ghl_created_on",
             label: "Created On",
+            type: "date",
+            fieldType: "date",
+        },
+        {
+            name: "ghl_notes",
+            label: "Notes",
+            type: "string",
+            fieldType: "textarea",
+        },
+        {
+            name: "status",
+            label: "Status",
+            type: "enumeration",
+            fieldType: "select",
+            options: [
+                {label: "Open", value: "open"},
+                {label: "Won", value: "won"},
+                {label: "Lost", value: "lost"},
+                {label: "Abandoned", value: "abandoned"},
+            ],
+            defaultValue: "open",
+        },  
+        {
+            name: "product_status",
+            label: "Product Status",
+            type: "enumeration",
+            fieldType: "select",
+            options: [
+                {label: "Free Trial", value: "free_trial"},
+                {label: "Paid Trial", value: "paid_trials"},
+                {label: "Paid", value: "paid"},
+                {label: "Legacy", value: "legacy"},
+            ],
+        },  
+        {
+            name: "installment_start_date",
+            label: "Installment Start Date",
+            type: "date",
+            fieldType: "date",
+        },
+        {
+            name: "consultation_status",
+            label: "Consultation Status",
+            type: "enumeration",
+            fieldType: "select",
+            options: [
+                {label: "Scheduled", value: "scheduled"},
+                {label: "Consult in Progress", value: "consult_in_progress"},
+                {label: "Merchant Agreed", value: "merchant_agreed"},
+                {label: "Merchant Declined", value: "merchant_declined"},
+                {label: "Proposal Sent", value: "proposal_sent"},
+                {label: "Follow up", value: "follow_up"},
+                {label: "Successful Payment", value: "successful_payment"},
+            ],
+        },  
+        {
+            name: "ghl_pipeline_id",
+            label: "Pipeline Id",
             type: "date",
             fieldType: "date",
         },
