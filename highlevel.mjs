@@ -86,6 +86,44 @@ export async function getAllNotes(contactId) {
         log.warn('retrieveHighlevelCustomFields url=%s, error=%s', url, err.toString());
     }
 }
+
+export async function importAllContactNotes({ delayMs = 200 } = {}) {
+    const db = await getMongoDb();
+    const contactsCollection = db.collection('contacts');
+    const cursor = contactsCollection.find({ id: { $exists: true } }, { projection: { id: 1 } });
+    let processedContacts = 0;
+    let contactsWithNotes = 0;
+    let totalNotesUpserted = 0;
+    let totalNotesModified = 0;
+
+    for await (const contact of cursor) {
+        const contactId = contact?.id;
+        if (!contactId) {
+            continue;
+        }
+        processedContacts++;
+        const notes = await getAllNotes(contactId);
+        if (!Array.isArray(notes) || notes.length === 0) {
+            continue;
+        }
+        const normalized = notes
+            .filter((note) => note && note.id)
+            .map((note) => ({
+                ...note,
+                contactId: note.contactId || contactId
+            }));
+        if (normalized.length > 0) {
+            const result = await upsertById('notes', normalized);
+            contactsWithNotes++;
+            totalNotesUpserted += result?.upserted || 0;
+            totalNotesModified += result?.modified || 0;
+        }
+        if (delayMs > 0) {
+            await delay(delayMs);
+        }
+    }
+    return { processedContacts, contactsWithNotes, totalNotesUpserted, totalNotesModified };
+}
 async function retrieveHighlevelCustomFields(model = 'contact') {
     const headers = {
         Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
@@ -418,25 +456,135 @@ export async function importAllHighLevelContacts(url, ALL_CONTACTS, customFieldM
     return {customFieldMap, contacts: ALL_CONTACTS};
 }
 
+const ENTITY_ALIASES = {
+    contacts: 'contacts',
+    users: 'users',
+    opportunities: 'opportunities',
+    calendars: 'calendars',
+    conversations: 'conversations',
+    customFields: 'customFields',
+    notes: 'notes',
+    all: 'all'
+};
+
+function parseEntitiesFromArgs(args) {
+    const entities = [];
+    for (const arg of args) {
+        if (arg.startsWith('-')) {
+            continue;
+        }
+        const normalized = arg.trim();
+        if (!normalized) {
+            continue;
+        }
+        const key = ENTITY_ALIASES[normalized];
+        if (key) {
+            entities.push(key);
+        }
+    }
+    return entities;
+}
+
+function printUsage() {
+    log.info('Usage: node highlevel.mjs [all|contacts|users|opportunities|calendars|conversations|customFields|notes]');
+    log.info('Examples:');
+    log.info('  node highlevel.mjs all');
+    log.info('  node highlevel.mjs contacts users notes');
+}
+
+async function fetchAllEntities() {
+    const { opportunities, opportunityCustomFieldMap } = await getOpportunitiesWithCustomFields();
+    const { contacts, customFieldMap } = await importAllHighLevelContacts();
+    const users = await getUsers();
+    const calendars = await getCalendars();
+    const conversations = await getAllConversations();
+    const stored = await storeGhlData({
+        contacts,
+        users,
+        opportunities,
+        calendars,
+        conversations,
+        customFields: [{ id: 'contact', contact: customFieldMap }, { id: 'opportunity', opportunity: opportunityCustomFieldMap }]
+    });
+    log.info('Stored GHL data %o', stored);
+    const notesSummary = await importAllContactNotes();
+    log.info('Stored GHL notes %o', notesSummary);
+}
+
+async function fetchSelectedEntities(entities) {
+    const summary = {};
+
+    if (entities.includes('opportunities') || entities.includes('customFields')) {
+        const { opportunities, opportunityCustomFieldMap } = await getOpportunitiesWithCustomFields();
+        if (entities.includes('opportunities')) {
+            summary.opportunities = await upsertById('opportunities', opportunities);
+        }
+        if (entities.includes('customFields')) {
+            summary.customFields = summary.customFields || [];
+            summary.customFields.push({ id: 'opportunity', opportunity: opportunityCustomFieldMap });
+        }
+    }
+
+    if (entities.includes('contacts') || entities.includes('customFields') || entities.includes('notes')) {
+        const { contacts, customFieldMap } = await importAllHighLevelContacts();
+        if (entities.includes('contacts')) {
+            summary.contacts = await upsertById('contacts', contacts);
+        }
+        if (entities.includes('customFields')) {
+            summary.customFields = summary.customFields || [];
+            summary.customFields.push({ id: 'contact', contact: customFieldMap });
+        }
+        if (entities.includes('notes')) {
+            summary.notes = await importAllContactNotes();
+        }
+    }
+
+    if (entities.includes('users')) {
+        const users = await getUsers();
+        summary.users = await upsertById('users', users);
+    }
+
+    if (entities.includes('calendars')) {
+        const calendars = await getCalendars();
+        summary.calendars = await upsertById('calendars', calendars);
+    }
+
+    if (entities.includes('conversations')) {
+        const conversations = await getAllConversations();
+        summary.conversations = await upsertById('conversations', conversations);
+    }
+
+    if (Array.isArray(summary.customFields) && summary.customFields.length > 0) {
+        summary.customFields = await upsertById('customfields', summary.customFields);
+    }
+
+    log.info('Stored GHL selected entities %o', summary);
+}
+
+async function run() {
+    const args = process.argv.slice(2);
+    if (args.includes('-h') || args.includes('--help')) {
+        printUsage();
+        return;
+    }
+    if (args.length === 0) {
+        printUsage();
+        return;
+    }
+    const entities = parseEntitiesFromArgs(args);
+    if (entities.length === 0 || entities.includes('all')) {
+        await fetchAllEntities();
+        return;
+    }
+    await fetchSelectedEntities(entities);
+}
+
 setTimeout(async () => {
     try {
-        const {opportunities, opportunityCustomFieldMap} = await getOpportunitiesWithCustomFields();
-        const {contacts, customFieldMap} = await importAllHighLevelContacts();
-        const users = await getUsers();
-        const calendars = await getCalendars();
-        const conversations = await getAllConversations();
-        const stored = await storeGhlData({
-            contacts,
-            users,
-            opportunities,
-            calendars,
-            conversations,
-            customFields: [{id:'contact', contact: customFieldMap}, {id:'opportunity', opportunity: opportunityCustomFieldMap}  ]
-        });
-        log.info('Stored GHL data %o', stored);
+        await run();
     } catch (err) {
         log.error('Error storing GHL data %o', err);
     } finally {
         process.exit(0);
     }
-}, 2000)
+}, 10)

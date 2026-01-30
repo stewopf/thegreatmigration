@@ -354,7 +354,6 @@ export const CUSTOM_FIELDS = [
             fieldType: "text",
             hidden: true,
         },
-
         {
             name: "ghl_created_date",
             label: "Created Date",
@@ -550,6 +549,34 @@ export const CUSTOM_FIELDS = [
             groupName: COMPANY_GROUP_NAME,
         },
     ]},
+    {objectTupe:"Deal", fields:[
+        {
+            name: "import_tag",
+            label: "Import Tag",
+            type: "string",
+            fieldType: "text",
+            hidden: true,
+        },
+        {
+            name: "ghl_id",
+            label: "Opportunity Id",
+            type: "string",
+            fieldType: "text",
+        },
+        {
+            name: "apex_id",
+            label: "Apex Id",
+            type: "string",
+            fieldType: "text",
+        },
+        {
+            name: "ghl_created_on",
+            label: "Created On",
+            type: "date",
+            fieldType: "date",
+        },
+
+    ]}
 ];
 
 function toCamelCase(input) {
