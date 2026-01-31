@@ -227,6 +227,64 @@ export async function getAllConversations(locationId = HIGHLEVEL_LOCATION_ID) {
     return ALL_CONVERSATIONS;
 }
 
+/**
+ * Fetches all messages for a single conversation via pagination.
+ * GET .../conversations/{conversationId}/messages?limit=20&lastMessageId=...
+ * Embeds are not included for call/voicemail; use separate "get call recording" API if needed.
+ */
+async function getAllMessagesForConversation(conversationId) {
+    const headers = {
+        Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
+        'Content-Type': 'application/json',
+        Version: '2021-04-15'
+    };
+    const baseUrl = `${HIGHLEVEL_API_URL || ''}`.replace(/\/+$/, '').replace('http:', 'https:');
+    const path = `/conversations/${encodeURIComponent(conversationId)}/messages`;
+    const limit = 20;
+    const seenIds = new Set();
+    const allMessages = [];
+    let lastMessageId = '';
+
+    while (true) {
+        let url = `${baseUrl}${path}?limit=${limit}`;
+        if (lastMessageId) {
+            url += `&lastMessageId=${encodeURIComponent(lastMessageId)}`;
+        }
+        try {
+            const response = await axios.get(url, { headers });
+            const data = response?.data || {};
+            const messagesWrapper = data?.messages;
+            const list = Array.isArray(messagesWrapper?.messages)
+                ? messagesWrapper.messages
+                : Array.isArray(data?.items)
+                    ? data.items
+                    : Array.isArray(data?.data)
+                        ? data.data
+                        : [];
+            for (const msg of list) {
+                if (msg?.id && !seenIds.has(msg.id)) {
+                    seenIds.add(msg.id);
+                    allMessages.push(msg);
+                }
+            }
+            const nextPage = messagesWrapper?.nextPage === true || messagesWrapper?.nextPage === 'true' ||
+                data?.nextPage === true || data?.nextPage === 'true';
+            const nextLastId = messagesWrapper?.lastMessageId ?? data?.lastMessageId ??
+                (list.length > 0 ? list[list.length - 1]?.id : null);
+            if (!nextPage || !nextLastId) {
+                break;
+            }
+            lastMessageId = nextLastId;
+            await delay(300);
+        } catch (err) {
+            const status = err?.response?.status;
+            log.warn('getAllMessagesForConversation conversationId=%s, status=%s, error=%s', conversationId, status, err.toString());
+            break;
+        }
+    }
+    return allMessages;
+}
+
 async function getOpportunities() {
     const headers = {
         Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
@@ -498,6 +556,20 @@ async function fetchAllEntities() {
     const users = await getUsers();
     const calendars = await getCalendars();
     const conversations = await getAllConversations();
+    for (let i = 0; i < conversations.length; i++) {
+        const conv = conversations[i];
+        if (!conv?.id) continue;
+        try {
+            conv.messages = await getAllMessagesForConversation(conv.id);
+            log.debug('conversation %s: embedded %s messages', conv.id, conv.messages?.length ?? 0);
+        } catch (err) {
+            log.warn('embed messages conversationId=%s error=%s', conv.id, err.toString());
+            conv.messages = [];
+        }
+        if (i < conversations.length - 1) {
+            await delay(400);
+        }
+    }
     const stored = await storeGhlData({
         contacts,
         users,
