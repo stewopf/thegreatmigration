@@ -267,6 +267,8 @@ const CONTACT_GROUP_NAME = "via_contact_details";
 const COMPANY_GROUP_NAME = "via_business_details";
 const WEBSITE_GROUP_NAME = "via_website_details";
 
+const OPPORTUNITY_GROUP_NAME = "via_deal_details";
+
 export const CUSTOM_FIELDS = [
     {objectType: "contacts", fields: [
         {
@@ -556,30 +558,35 @@ export const CUSTOM_FIELDS = [
             type: "string",
             fieldType: "text",
             hidden: true,
+            groupName: OPPORTUNITY_GROUP_NAME,
         },
         {
             name: "ghl_id",
             label: "Opportunity Id",
             type: "string",
             fieldType: "text",
+            groupName: OPPORTUNITY_GROUP_NAME,
         },
         {
             name: "apex_id",
             label: "Apex Id",
             type: "string",
             fieldType: "text",
+            groupName: OPPORTUNITY_GROUP_NAME,
         },
         {
             name: "ghl_created_on",
             label: "Created On",
             type: "date",
             fieldType: "date",
+            groupName: OPPORTUNITY_GROUP_NAME,
         },
         {
             name: "ghl_notes",
             label: "Notes",
             type: "string",
             fieldType: "textarea",
+            groupName: OPPORTUNITY_GROUP_NAME,
         },
         {
             name: "status",
@@ -593,6 +600,7 @@ export const CUSTOM_FIELDS = [
                 {label: "Abandoned", value: "abandoned"},
             ],
             defaultValue: "open",
+            groupName: OPPORTUNITY_GROUP_NAME,
         },  
         {
             name: "product_status",
@@ -601,16 +609,18 @@ export const CUSTOM_FIELDS = [
             fieldType: "select",
             options: [
                 {label: "Free Trial", value: "free_trial"},
-                {label: "Paid Trial", value: "paid_trials"},
+                {label: "Paid Trial", value: "paid_trial"},
                 {label: "Paid", value: "paid"},
                 {label: "Legacy", value: "legacy"},
             ],
+            groupName: OPPORTUNITY_GROUP_NAME,
         },  
         {
             name: "installment_start_date",
             label: "Installment Start Date",
             type: "date",
             fieldType: "date",
+            groupName: OPPORTUNITY_GROUP_NAME,
         },
         {
             name: "consultation_status",
@@ -626,12 +636,28 @@ export const CUSTOM_FIELDS = [
                 {label: "Follow up", value: "follow_up"},
                 {label: "Successful Payment", value: "successful_payment"},
             ],
+            groupName: OPPORTUNITY_GROUP_NAME,
         },  
         {
             name: "ghl_pipeline_id",
             label: "Pipeline Id",
-            type: "date",
-            fieldType: "date",
+            type: "string",
+            fieldType: "text",
+            groupName: OPPORTUNITY_GROUP_NAME,
+        },
+        {
+            name: "phone",
+            label: "Phone",
+            type: "string",
+            fieldType: "text",
+            groupName: OPPORTUNITY_GROUP_NAME,
+        },
+        {
+            name: "email",
+            label: "Email",
+            type: "string",
+            fieldType: "text",
+            groupName: OPPORTUNITY_GROUP_NAME,
         },
 
     ]}
