@@ -124,6 +124,38 @@ export async function importAllContactNotes({ delayMs = 200 } = {}) {
     }
     return { processedContacts, contactsWithNotes, totalNotesUpserted, totalNotesModified };
 }
+
+export async function importAllAppointments({ delayMs = 200 } = {}) {
+    const calendars = await getCalendars();
+    if (!Array.isArray(calendars) || calendars.length === 0) {
+        return { calendars: 0, appointments: 0, totalUpserted: 0, totalModified: 0 };
+    }
+    const appointments = [];
+    calendars.forEach((calendar) => {
+        const list = Array.isArray(calendar?.appointments) ? calendar.appointments : [];
+        list.forEach((appointment) => {
+            if (appointment) {
+                appointments.push({
+                    ...appointment,
+                    calendarId: appointment?.calendarId || calendar?.id
+                });
+            }
+        });
+    });
+    if (appointments.length === 0) {
+        return { calendars: calendars.length, appointments: 0, totalUpserted: 0, totalModified: 0 };
+    }
+    const result = await upsertById('appointments', appointments);
+    if (delayMs > 0) {
+        await delay(delayMs);
+    }
+    return {
+        calendars: calendars.length,
+        appointments: appointments.length,
+        totalUpserted: result?.upserted || 0,
+        totalModified: result?.modified || 0
+    };
+}
 async function retrieveHighlevelCustomFields(model = 'contact') {
     const headers = {
         Authorization: `Bearer ${HIGHLEVEL_API_KEY}`,
@@ -519,6 +551,7 @@ const ENTITY_ALIASES = {
     users: 'users',
     opportunities: 'opportunities',
     calendars: 'calendars',
+    appointments: 'appointments',
     conversations: 'conversations',
     customFields: 'customFields',
     notes: 'notes',
@@ -544,10 +577,10 @@ function parseEntitiesFromArgs(args) {
 }
 
 function printUsage() {
-    log.info('Usage: node highlevel.mjs [all|contacts|users|opportunities|calendars|conversations|customFields|notes]');
+    log.info('Usage: node highlevel.mjs [all|contacts|users|opportunities|calendars|appointments|conversations|customFields|notes]');
     log.info('Examples:');
     log.info('  node highlevel.mjs all');
-    log.info('  node highlevel.mjs contacts users notes');
+    log.info('  node highlevel.mjs contacts users notes appointments');
 }
 
 async function fetchAllEntities() {
@@ -581,6 +614,8 @@ async function fetchAllEntities() {
     log.info('Stored GHL data %o', stored);
     const notesSummary = await importAllContactNotes();
     log.info('Stored GHL notes %o', notesSummary);
+    const appointmentsSummary = await importAllAppointments();
+    log.info('Stored GHL appointments %o', appointmentsSummary);
 }
 
 async function fetchSelectedEntities(entities) {
@@ -619,6 +654,10 @@ async function fetchSelectedEntities(entities) {
     if (entities.includes('calendars')) {
         const calendars = await getCalendars();
         summary.calendars = await upsertById('calendars', calendars);
+    }
+
+    if (entities.includes('appointments')) {
+        summary.appointments = await importAllAppointments();
     }
 
     if (entities.includes('conversations')) {

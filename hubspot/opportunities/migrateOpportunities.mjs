@@ -181,6 +181,22 @@ async function getPrimaryCompanyIdForContact(hubspotClient, contactId) {
     return results[0]?.toObjectId || null;
 }
 
+async function getCompanyApexId(hubspotClient, companyId, cache) {
+    if (!hubspotClient || !companyId) {
+        return null;
+    }
+    if (cache.has(companyId)) {
+        return cache.get(companyId);
+    }
+    const response = await hubspotClient.crm.companies.basicApi.getById(
+        companyId,
+        ["apex_id"]
+    );
+    const apexId = response?.properties?.apex_id || null;
+    cache.set(companyId, apexId);
+    return apexId;
+}
+
 export async function deleteDealsByImportTag(
     hubspotClient,
     { importTag = "GHL_MIGRATION", dryRun = false } = {}
@@ -424,7 +440,7 @@ function normalizeEnumerationValue(value) {
         .toLowerCase();
     return value;
 }
-async function buildDealProperties(opportunity, { defaultDealstage, defaultPipeline, hsTagIds, db } = {}) {
+async function buildDealProperties(opportunity, { defaultDealstage, defaultPipeline, hsTagIds, db, companyApexId } = {}) {
     const dealname =
         normalizePropertyValue(opportunity?.name) ||
         normalizePropertyValue(opportunity?.title) ||
@@ -442,7 +458,7 @@ async function buildDealProperties(opportunity, { defaultDealstage, defaultPipel
         dealstage,
         import_tag: "GHL_MIGRATION",
         ghl_id: opportunity?.id,
-        apex_id: opportunity?.apexId,
+        apex_id: companyApexId || opportunity?.apexId,
         phone: opportunity?.contact?.phone,
         email: opportunity?.contact?.email,
         status: normalizeEnumerationValue(opportunity?.status),
@@ -566,6 +582,7 @@ export async function migrateOpportunitiesToHubspot({
         const hubspotClient = dryRun ? null : buildHubspotClient(hubspotAccessToken);
         const hubspotTagCache = new Map();
         const tagApiState = { unavailable: false };
+        const companyApexIdCache = new Map();
         let dealToContactAssociationType = null;
         let dealToCompanyAssociationType = null;
         if (!dryRun) {
@@ -619,6 +636,7 @@ export async function migrateOpportunitiesToHubspot({
             }
             let hubspotContactId = null;
             let hubspotCompanyId = null;
+            let companyApexId = null;
             if (!dryRun && opportunity?.contactId) {
                 const contactMap = await mapColl.findOne({ ghlId: opportunity.contactId, objectTypeId: "contact" });
                 hubspotContactId = contactMap?.hubspotId || null;
@@ -628,6 +646,13 @@ export async function migrateOpportunitiesToHubspot({
                     } catch (err) {
                         console.warn("failed to resolve contact company", err?.message || err);
                     }
+                }
+            }
+            if (!dryRun && hubspotCompanyId) {
+                try {
+                    companyApexId = await getCompanyApexId(hubspotClient, hubspotCompanyId, companyApexIdCache);
+                } catch (err) {
+                    console.warn("failed to resolve company apex_id", err?.message || err);
                 }
             }
             if (!dryRun && opportunity?.contactId && !hubspotContactId) {
@@ -641,7 +666,8 @@ export async function migrateOpportunitiesToHubspot({
                 defaultDealstage: fallbackStage,
                 defaultPipeline: fallbackPipeline,
                 hsTagIds,
-                db
+                db,
+                companyApexId
             });
             if (!properties.dealstage) {
                 summary.skippedMissingStage += 1;

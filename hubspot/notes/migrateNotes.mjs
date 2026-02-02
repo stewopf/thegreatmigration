@@ -5,6 +5,7 @@ const DEFAULT_DB_NAME = "GoHighLevel";
 const DEFAULT_NOTES_COLLECTION = "notes";
 const DEFAULT_MAP_COLLECTION = "GHLHubspotIdMap";
 const DEFAULT_OBJECT_TYPE = "contact";
+const DEFAULT_OPPORTUNITY_OBJECT_TYPE = "opportunity";
 const DEFAULT_CHECKPOINT_ID = "hubspot_notes";
 
 function buildHubspotClient(accessToken = process.env.HUBSPOT_ACCESS_TOKEN) {
@@ -44,7 +45,7 @@ function parseCliArgs(argv = []) {
             options[key] = valuePart;
             continue;
         }
-        if (key === "dryRun" || key === "delete" || key === "resume") {
+        if (key === "dryRun" || key === "delete" || key === "resume" || key === "countMultiRelations" || key === "countMultiRelationsByKey") {
             options[key] = true;
             continue;
         }
@@ -66,6 +67,8 @@ Options:
   --db-name <name>         Mongo database name (default: GoHighLevel)
   --notes-collection <name>  Mongo notes collection (default: notes)
   --map-collection <name>  Mapping collection (default: GHLHubspotIdMap)
+  --count-multi-relations  Count notes with relations length > 1
+  --count-multi-relations-by-key  Count objectKeys for multi-relation notes
   --limit <number>         Max notes to migrate
   --checkpoint-id <id>     Checkpoint document id
   --resume                 Resume from checkpoint (default)
@@ -85,6 +88,62 @@ async function getDb(mongoUri, dbName) {
     const client = new MongoClient(mongoUri);
     await client.connect();
     return { client, db: client.db(dbName) };
+}
+
+async function countNotesWithMultipleRelations({
+    mongoUri = process.env.MONGO_URI || "mongodb://localhost:27017",
+    dbName = DEFAULT_DB_NAME,
+    notesCollection = DEFAULT_NOTES_COLLECTION
+} = {}) {
+    const { client, db } = await getDb(mongoUri, dbName);
+    try {
+        const collection = db.collection(notesCollection);
+        const count = await collection.countDocuments({
+            $expr: {
+                $gt: [
+                    { $size: { $ifNull: ["$relations", []] } },
+                    1
+                ]
+            }
+        });
+        return count;
+    } finally {
+        await client.close();
+    }
+}
+
+async function countMultiRelationObjectKeys({
+    mongoUri = process.env.MONGO_URI || "mongodb://localhost:27017",
+    dbName = DEFAULT_DB_NAME,
+    notesCollection = DEFAULT_NOTES_COLLECTION
+} = {}) {
+    const { client, db } = await getDb(mongoUri, dbName);
+    try {
+        const collection = db.collection(notesCollection);
+        const results = await collection.aggregate([
+            {
+                $match: {
+                    $expr: {
+                        $gt: [
+                            { $size: { $ifNull: ["$relations", []] } },
+                            1
+                        ]
+                    }
+                }
+            },
+            { $unwind: "$relations" },
+            {
+                $group: {
+                    _id: "$relations.objectKey",
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { count: -1, _id: 1 } }
+        ]).toArray();
+        return results;
+    } finally {
+        await client.close();
+    }
 }
 
 async function loadCheckpoint(db, checkpointId) {
@@ -133,7 +192,8 @@ function buildNoteProperties(note, { includePlainText = false } = {}) {
     );
     const properties = {
         hs_note_body: htmlBody || textBody,
-        hs_timestamp: timestamp
+        hs_timestamp: timestamp,
+        import_tag: "GHL_MIGRATION"
     };
     if (includePlainText && textBody && textBody !== htmlBody) {
         properties.hs_note_body_plain_text = textBody;
@@ -152,6 +212,25 @@ async function getNoteToContactAssociationType(hubspotClient) {
         associationCategory: match?.category || match?.associationCategory || "HUBSPOT_DEFINED",
         associationTypeId: match.typeId
     };
+}
+
+async function getNoteToDealAssociationType(hubspotClient) {
+    const response = await hubspotClient.crm.associations.v4.schema.definitionsApi.getAll("notes", "deals");
+    const results = Array.isArray(response?.results) ? response.results : response;
+    const match = results?.find((item) => (item?.category || item?.associationCategory) === "HUBSPOT_DEFINED");
+    if (!match?.typeId) {
+        throw new Error("Unable to resolve note-to-deal association type id");
+    }
+    return {
+        associationCategory: match?.category || match?.associationCategory || "HUBSPOT_DEFINED",
+        associationTypeId: match.typeId
+    };
+}
+
+function getRelationRecordId(note, objectKey) {
+    const relations = Array.isArray(note?.relations) ? note.relations : [];
+    const match = relations.find((relation) => relation?.objectKey === objectKey);
+    return match?.recordId || null;
 }
 
 async function checkPlainTextProperty(hubspotClient) {
@@ -186,7 +265,15 @@ export async function migrateNotesToHubspot({
     try {
         const notesColl = db.collection(notesCollection);
         const mapColl = db.collection(mapCollection);
-        const query = { contactId: { $exists: true, $ne: null } };
+        const query = {
+            $or: [
+                { contactId: { $exists: true, $ne: null } },
+                { opportunityId: { $exists: true, $ne: null } },
+                { "relations.objectKey": "contact" },
+                { "relations.objectKey": "opportunity" },
+                { "relations.objectKey": "appointment" }
+            ]
+        };
         if (resume) {
             const checkpoint = await loadCheckpoint(db, checkpointId);
             const lastId = checkpoint?.lastId;
@@ -204,36 +291,67 @@ export async function migrateNotesToHubspot({
             processed: 0,
             created: 0,
             skippedMissingContactId: 0,
+            skippedMissingOpportunityId: 0,
             skippedMissingHubspotId: 0,
             skippedMissingBody: 0,
             errors: 0
         };
 
         let hubspotClient;
-        let associationType;
+        let contactAssociationType;
+        let dealAssociationType;
         let includePlainText = false;
 
         if (!dryRun) {
             hubspotClient = buildHubspotClient(hubspotAccessToken);
-            associationType = await getNoteToContactAssociationType(hubspotClient);
+            contactAssociationType = await getNoteToContactAssociationType(hubspotClient);
+            dealAssociationType = await getNoteToDealAssociationType(hubspotClient);
             includePlainText = await checkPlainTextProperty(hubspotClient);
         }
 
         for await (const note of cursor) {
             let lastProcessedId = note?._id ? String(note._id) : undefined;
-            const contactId = note?.contactId;
-            if (!contactId) {
+            const contactId = note?.contactId || getRelationRecordId(note, "contact");
+            const opportunityId = note?.opportunityId || getRelationRecordId(note, "opportunity");
+            const appointmentId = getRelationRecordId(note, "appointment");
+            if (!contactId && !opportunityId) {
                 summary.skippedMissingContactId += 1;
+                summary.skippedMissingOpportunityId += 1;
+                if (appointmentId) {
+                    console.log("[notes] dangling appointment relation", {
+                        noteId: note?.id,
+                        appointmentId
+                    });
+                }
                 if (lastProcessedId) {
                     await saveCheckpoint(db, checkpointId, { lastId: lastProcessedId });
                 }
                 continue;
             }
             summary.processed += 1;
-            const mapping = await mapColl.findOne({ ghlId: contactId, objectTypeId: DEFAULT_OBJECT_TYPE });
-            const hubspotContactId = mapping?.hubspotId;
-            if (!hubspotContactId) {
-                summary.skippedMissingHubspotId += 1;
+            let hubspotContactId = null;
+            let hubspotDealId = null;
+            if (contactId) {
+                const mapping = await mapColl.findOne({ ghlId: contactId, objectTypeId: DEFAULT_OBJECT_TYPE });
+                hubspotContactId = mapping?.hubspotId || null;
+                if (!hubspotContactId) {
+                    summary.skippedMissingHubspotId += 1;
+                }
+            }
+            if (opportunityId) {
+                const mapping = await mapColl.findOne({ ghlId: opportunityId, objectTypeId: DEFAULT_OPPORTUNITY_OBJECT_TYPE });
+                hubspotDealId = mapping?.hubspotId || null;
+                if (!hubspotDealId) {
+                    summary.skippedMissingHubspotId += 1;
+                }
+            }
+            if (!hubspotContactId && !hubspotDealId) {
+                if (appointmentId) {
+                    console.log("[notes] dangling appointment relation", {
+                        noteId: note?.id,
+                        appointmentId
+                    });
+                }
                 if (lastProcessedId) {
                     await saveCheckpoint(db, checkpointId, { lastId: lastProcessedId });
                 }
@@ -249,8 +367,34 @@ export async function migrateNotesToHubspot({
                 continue;
             }
 
+            const associations = [];
+            if (hubspotContactId) {
+                associations.push({
+                    to: { id: hubspotContactId },
+                    types: [contactAssociationType]
+                });
+            }
+            if (hubspotDealId) {
+                associations.push({
+                    to: { id: hubspotDealId },
+                    types: [dealAssociationType]
+                });
+            }
+            if (appointmentId) {
+                console.log("[notes] dangling appointment relation", {
+                    noteId: note?.id,
+                    appointmentId
+                });
+            }
+
             if (dryRun) {
-                console.log("[dry-run] create note for contact", contactId, "->", hubspotContactId);
+                console.log("[dry-run] create note associations", {
+                    noteId: note?.id,
+                    contactId,
+                    opportunityId,
+                    hubspotContactId,
+                    hubspotDealId
+                });
                 summary.created += 1;
                 if (lastProcessedId) {
                     await saveCheckpoint(db, checkpointId, { lastId: lastProcessedId });
@@ -261,12 +405,7 @@ export async function migrateNotesToHubspot({
             try {
                 await hubspotClient.crm.objects.notes.basicApi.create({
                     properties,
-                    associations: [
-                        {
-                            to: { id: hubspotContactId },
-                            types: [associationType]
-                        }
-                    ]
+                    associations
                 });
                 summary.created += 1;
                 if (lastProcessedId) {
@@ -274,7 +413,7 @@ export async function migrateNotesToHubspot({
                 }
                 if (summary.processed % progressInterval === 0) {
                     console.log(
-                        `notes progress: processed=${summary.processed}, created=${summary.created}, skippedMissingContactId=${summary.skippedMissingContactId}, skippedMissingHubspotId=${summary.skippedMissingHubspotId}, skippedMissingBody=${summary.skippedMissingBody}, errors=${summary.errors}`
+                        `notes progress: processed=${summary.processed}, created=${summary.created}, skippedMissingContactId=${summary.skippedMissingContactId}, skippedMissingOpportunityId=${summary.skippedMissingOpportunityId}, skippedMissingHubspotId=${summary.skippedMissingHubspotId}, skippedMissingBody=${summary.skippedMissingBody}, errors=${summary.errors}`
                     );
                 }
             } catch (err) {
@@ -337,19 +476,42 @@ if (import.meta.url === new URL(process.argv[1], "file:").href) {
         printUsage();
         process.exit(0);
     }
-    if (cli.delete) {
-        deleteHubspotNotes({
-            hubspotAccessToken: cli.hubspotAccessToken,
-            dryRun: cli.dryRun,
-            batchSize: cli.batchSize
-        }).then((result) => {
+    const run = async () => {
+        if (cli.countMultiRelations) {
+            const count = await countNotesWithMultipleRelations({
+                mongoUri: cli.mongoUri,
+                dbName: cli.dbName,
+                notesCollection: cli.notesCollection
+            });
+            console.log(`notes with relations > 1: ${count}`);
+            return;
+        }
+        if (cli.countMultiRelationsByKey) {
+            const counts = await countMultiRelationObjectKeys({
+                mongoUri: cli.mongoUri,
+                dbName: cli.dbName,
+                notesCollection: cli.notesCollection
+            });
+            if (!counts || counts.length === 0) {
+                console.log("multi-relation objectKeys: none");
+                return;
+            }
+            console.log("multi-relation objectKeys:");
+            counts.forEach((row) => {
+                console.log(`  ${row._id || "unknown"}: ${row.count}`);
+            });
+            return;
+        }
+        if (cli.delete) {
+            const result = await deleteHubspotNotes({
+                hubspotAccessToken: cli.hubspotAccessToken,
+                dryRun: cli.dryRun,
+                batchSize: cli.batchSize
+            });
             console.log(`delete complete: scanned ${result.scanned}, deleted ${result.deleted}`);
-        }).catch((err) => {
-            console.error("note delete failed:", err?.message || err);
-            process.exit(1);
-        });
-    } else {
-        migrateNotesToHubspot({
+            return;
+        }
+        const summary = await migrateNotesToHubspot({
             mongoUri: cli.mongoUri,
             dbName: cli.dbName,
             notesCollection: cli.notesCollection,
@@ -359,11 +521,12 @@ if (import.meta.url === new URL(process.argv[1], "file:").href) {
             resume: cli.resume !== false,
             limit: cli.limit,
             dryRun: cli.dryRun
-        }).then((summary) => {
-            console.log("note migration complete:", summary);
-        }).catch((err) => {
-            console.error("note migration failed:", err?.message || err);
-            process.exit(1);
         });
-    }
+        console.log("note migration complete:", summary);
+    };
+
+    run().catch((err) => {
+        console.error("note migration failed:", err?.message || err);
+        process.exit(1);
+    });
 }

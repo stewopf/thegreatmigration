@@ -230,6 +230,7 @@ function extractCompanyProperties(company, ghlContact) {
     });
     return result;
 }
+const SMS_OPT_IN_VALUE = "You agree to receive automated reminders and promotional messages from WebForge. You also agree to the Terms of Use and Privacy Policy. This consent is not required to make a purchase. Message and data rates may apply. Reply STOP to stop messages.";
 /**
  * Create a base HubSpot contact.
  * Requires at least an email address.
@@ -299,7 +300,7 @@ export async function createBaseHubspotContact(
                 baseProperties.ghl_created_date = new Date(customField.value).toISOString();
                 break;
             case "4xAtW6G5ay7NcXlw3LTJ":
-                baseProperties[toHubspotPropertyName("smsOptIn")] = customField.value;
+                baseProperties[toHubspotPropertyName("smsOptIn")] = (Array.isArray(customField.value) && customField.value.length === 1  &&  customField.value[0] === SMS_OPT_IN_VALUE) ? true : false;
                 break;
             case "qUtfAwv63pRApArTvSjp":
                 baseProperties.secondary_email = customField.value;
@@ -492,6 +493,7 @@ Options:
   --mongo-uri <uri>        Mongo connection string
   --db-name <name>         Mongo database name (default: GoHighLevel)
   --collection <name>      Mongo contacts collection (default: contacts)
+  --contact-ids <ids>      Comma-separated GHL contact ids to migrate
   --limit <number>         Max contacts to migrate
   --checkpoint-id <id>     Checkpoint document id
   --reset <entity>         Clear failed maps + checkpoints
@@ -530,7 +532,8 @@ export async function migrateContactsToHubspot({
     checkpointId = "hubspot_contacts",
     resume = true,
     dryRun = false,
-    limit
+    limit,
+    contactIds
 } = {}) {
     if (!hubspotAccessToken && !dryRun) {
         throw new Error("HUBSPOT_ACCESS_TOKEN is not set");
@@ -540,7 +543,9 @@ export async function migrateContactsToHubspot({
     try {
         const collection = db.collection(collectionName);
         let query = {};
-        if (resume) {
+        if (Array.isArray(contactIds) && contactIds.length > 0) {
+            query = { id: { $in: contactIds } };
+        } else if (resume) {
             const checkpoint = await loadCheckpoint(db, checkpointId);
             if (checkpoint?.lastId) {
                 query = { _id: { $gt: checkpoint.lastId } };
@@ -557,7 +562,7 @@ export async function migrateContactsToHubspot({
             if (Number.isInteger(limit) && processed >= limit) {
                 break;
             }
-            if ((processed % 50) === 0) {
+            if ((processed % 25) === 0) {
                 console.log(`processed ${processed} contacts`);
             }
             const contact = await cursor.next();
@@ -621,6 +626,12 @@ if (import.meta.url === new URL(process.argv[1], "file:").href) {
     }
     const parsedLimit = cli.limit ? Number(cli.limit) : undefined;
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+    const contactIds = cli.contactIds
+        ? String(cli.contactIds)
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean)
+        : undefined;
     if (cli.reset) {
         const { client, db } = await getDb(
             cli.mongoUri || process.env.MONGO_URI || "mongodb://localhost:27017",
@@ -654,7 +665,8 @@ if (import.meta.url === new URL(process.argv[1], "file:").href) {
         checkpointId: cli.checkpointId,
         resume: cli.resume,
         dryRun: cli.dryRun,
-        limit
+        limit,
+        contactIds
     }).catch((err) => {
         console.error("migrateContacts failed:", err?.message || err);
         process.exit(1);

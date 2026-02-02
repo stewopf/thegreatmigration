@@ -268,6 +268,7 @@ const COMPANY_GROUP_NAME = "via_business_details";
 const WEBSITE_GROUP_NAME = "via_website_details";
 
 const OPPORTUNITY_GROUP_NAME = "via_deal_details";
+const APPOINTMENT_GROUP_NAME = "via_appointment_details";
 
 export const CUSTOM_FIELDS = [
     {objectType: "contacts", fields: [
@@ -341,13 +342,10 @@ export const CUSTOM_FIELDS = [
         },
         {
             name:"smsoptin",
-            label: "SMS Opt In",
-            type: "enumeration",
+            label: "SMS Opt In: You agree to receive automated reminders and promotional messages from WebForge. You also agree to the Terms of Use and Privacy Policy. This consent is not required to make a purchase. Message and data rates may apply. Reply STOP to stop messages.",
+            type: "boolean",
             fieldType: "checkbox",
-            options: [
-                "You agree to receive automated reminders and promotional messages from WebForge. You also agree to the Terms of Use and Privacy Policy. This consent is not required to make a purchase. Message and data rates may apply. Reply STOP to stop messages."
-            ],
-            defaultValue: "false",
+            defaultValue: false,
             groupName: CONTACT_GROUP_NAME,
         }
     ]},
@@ -662,6 +660,43 @@ export const CUSTOM_FIELDS = [
             groupName: OPPORTUNITY_GROUP_NAME,
         },
 
+    ]},
+    {objectType:'meetings', fields:[
+        {
+            name: "import_tag",
+            label: "Import Tag",
+            type: "string",
+            fieldType: "text",
+            hidden: true,
+        },
+        {
+            name: "ghl_id",
+            label: "GHL Id",
+            type: "string",
+            fieldType: "text",
+            groupName: APPOINTMENT_GROUP_NAME,
+        },
+        {
+            name: "date_added",
+            label: "Date Added",
+            type: "date",
+            fieldType: "date",
+            groupName: APPOINTMENT_GROUP_NAME,
+        },
+        {
+            name: "date_updated",
+            label: "Date Updated",
+            type: "date",
+            fieldType: "date",
+            groupName: APPOINTMENT_GROUP_NAME,
+        },
+        {
+            name: "ghl_source",
+            label: "Source",
+            type: "string",
+            fieldType: "text",
+            groupName: APPOINTMENT_GROUP_NAME,
+        },
     ]}
 ];
 
