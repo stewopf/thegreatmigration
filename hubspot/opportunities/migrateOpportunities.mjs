@@ -101,6 +101,86 @@ async function saveCheckpoint(db, checkpointId, data) {
     );
 }
 
+async function recordFailedMigration(db, {
+    entityType,
+    ghlId,
+    reason
+} = {}) {
+    if (!db || !entityType || !ghlId) {
+        return;
+    }
+    await db.collection("hubspot_failed_migrations").updateOne(
+        { entityType, ghlId },
+        {
+            $set: { reason, updatedAt: new Date() },
+            $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+    );
+}
+
+async function getPrimaryCompanyContactAssociationType(hubspotClient) {
+    const response = await hubspotClient.crm.associations.v4.schema.definitionsApi.getAll("companies", "contacts");
+    const results = Array.isArray(response?.results) ? response.results : response;
+    const primary = results?.find((item) => {
+        const label = String(item?.label || "").toLowerCase();
+        return label === "primary";
+    });
+    if (!primary) {
+        return null;
+    }
+    return {
+        associationCategory: primary?.category || "HUBSPOT_DEFINED",
+        associationTypeId: primary?.typeId
+    };
+}
+
+async function getDefaultDealAssociationType(hubspotClient, fromObject, toObject) {
+    const response = await hubspotClient.crm.associations.v4.schema.definitionsApi.getAll(fromObject, toObject);
+    const results = Array.isArray(response?.results) ? response.results : response;
+    const match = results?.find((item) => (item?.category || item?.associationCategory) === "HUBSPOT_DEFINED");
+    if (!match?.typeId) {
+        return null;
+    }
+    return {
+        associationCategory: match?.category || match?.associationCategory || "HUBSPOT_DEFINED",
+        associationTypeId: match.typeId
+    };
+}
+
+async function getPrimaryCompanyIdForContact(hubspotClient, contactId) {
+    if (!contactId) {
+        return null;
+    }
+    let primaryType = null;
+    try {
+        primaryType = await getPrimaryCompanyContactAssociationType(hubspotClient);
+    } catch (err) {
+        console.warn("failed to load primary company association type", err?.message || err);
+    }
+    const response = await hubspotClient.crm.associations.v4.basicApi.getPage(
+        "contacts",
+        contactId,
+        "companies",
+        undefined,
+        100
+    );
+    const results = Array.isArray(response?.results) ? response.results : [];
+    if (results.length === 0) {
+        return null;
+    }
+    if (primaryType?.associationTypeId) {
+        const primary = results.find((association) => {
+            const types = Array.isArray(association?.associationTypes) ? association.associationTypes : [];
+            return types.some((type) => type?.associationTypeId === primaryType.associationTypeId);
+        });
+        if (primary?.toObjectId) {
+            return primary.toObjectId;
+        }
+    }
+    return results[0]?.toObjectId || null;
+}
+
 export async function deleteDealsByImportTag(
     hubspotClient,
     { importTag = "GHL_MIGRATION", dryRun = false } = {}
@@ -486,6 +566,16 @@ export async function migrateOpportunitiesToHubspot({
         const hubspotClient = dryRun ? null : buildHubspotClient(hubspotAccessToken);
         const hubspotTagCache = new Map();
         const tagApiState = { unavailable: false };
+        let dealToContactAssociationType = null;
+        let dealToCompanyAssociationType = null;
+        if (!dryRun) {
+            try {
+                dealToContactAssociationType = await getDefaultDealAssociationType(hubspotClient, "deals", "contacts");
+                dealToCompanyAssociationType = await getDefaultDealAssociationType(hubspotClient, "deals", "companies");
+            } catch (err) {
+                console.warn("failed to load deal association types", err?.message || err);
+            }
+        }
         let resolvedDefaults = { pipelineId: defaultPipeline, stageId: defaultDealstage };
         if (!dryRun && (!defaultDealstage || !defaultPipeline)) {
             resolvedDefaults = await getDefaultPipelineAndStage(hubspotClient);
@@ -527,6 +617,26 @@ export async function migrateOpportunitiesToHubspot({
                     summary.errors += 1;
                 }
             }
+            let hubspotContactId = null;
+            let hubspotCompanyId = null;
+            if (!dryRun && opportunity?.contactId) {
+                const contactMap = await mapColl.findOne({ ghlId: opportunity.contactId, objectTypeId: "contact" });
+                hubspotContactId = contactMap?.hubspotId || null;
+                if (hubspotContactId) {
+                    try {
+                        hubspotCompanyId = await getPrimaryCompanyIdForContact(hubspotClient, hubspotContactId);
+                    } catch (err) {
+                        console.warn("failed to resolve contact company", err?.message || err);
+                    }
+                }
+            }
+            if (!dryRun && opportunity?.contactId && !hubspotContactId) {
+                await recordFailedMigration(db, {
+                    entityType: "opportunity",
+                    ghlId,
+                    reason: "missing hubspot contact mapping"
+                });
+            }
             const properties = await buildDealProperties(opportunity, {
                 defaultDealstage: fallbackStage,
                 defaultPipeline: fallbackPipeline,
@@ -535,6 +645,11 @@ export async function migrateOpportunitiesToHubspot({
             });
             if (!properties.dealstage) {
                 summary.skippedMissingStage += 1;
+                await recordFailedMigration(db, {
+                    entityType: "opportunity",
+                    ghlId,
+                    reason: "missing dealstage"
+                });
                 if (lastProcessedId) {
                     await saveCheckpoint(db, checkpointId, { lastId: lastProcessedId });
                 }
@@ -555,11 +670,36 @@ export async function migrateOpportunitiesToHubspot({
                 const hubspotId = response?.id;
                 if (hubspotId) {
                     await upsertGhlHubspotIdMap(db, { ghlId, hubspotId });
+                    if (hubspotContactId) {
+                        const associations = dealToContactAssociationType ? [dealToContactAssociationType] : [];
+                        await hubspotClient.crm.associations.v4.basicApi.create(
+                            "deals",
+                            hubspotId,
+                            "contacts",
+                            hubspotContactId,
+                            associations
+                        );
+                    }
+                    if (hubspotCompanyId) {
+                        const associations = dealToCompanyAssociationType ? [dealToCompanyAssociationType] : [];
+                        await hubspotClient.crm.associations.v4.basicApi.create(
+                            "deals",
+                            hubspotId,
+                            "companies",
+                            hubspotCompanyId,
+                            associations
+                        );
+                    }
                 }
                 summary.created += 1;
             } catch (err) {
                 const status = err?.code || err?.response?.statusCode || err?.response?.status;
                 console.error("failed to create deal", status || "", err?.message || err);
+                await recordFailedMigration(db, {
+                    entityType: "opportunity",
+                    ghlId,
+                    reason: err?.message || String(err)
+                });
                 summary.errors += 1;
             } finally {
                 if (lastProcessedId) {

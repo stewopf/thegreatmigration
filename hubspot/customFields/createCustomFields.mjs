@@ -342,9 +342,12 @@ export const CUSTOM_FIELDS = [
         {
             name:"smsoptin",
             label: "SMS Opt In",
-            type: "boolean",
+            type: "enumeration",
             fieldType: "checkbox",
-            defaultValue: false,
+            options: [
+                "You agree to receive automated reminders and promotional messages from WebForge. You also agree to the Terms of Use and Privacy Policy. This consent is not required to make a purchase. Message and data rates may apply. Reply STOP to stop messages."
+            ],
+            defaultValue: "false",
             groupName: CONTACT_GROUP_NAME,
         }
     ]},
@@ -558,7 +561,6 @@ export const CUSTOM_FIELDS = [
             type: "string",
             fieldType: "text",
             hidden: true,
-            groupName: OPPORTUNITY_GROUP_NAME,
         },
         {
             name: "ghl_id",

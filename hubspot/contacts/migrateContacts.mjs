@@ -321,10 +321,15 @@ export async function createBaseHubspotContact(
         return { id: null, properties, companyProps };
     }
     const client = hubspotClient || buildHubspotClient();
-    const created = await client.crm.contacts.basicApi.create({
-        properties
-    });
-
+    let created = null;
+    try {
+        created = await client.crm.contacts.basicApi.create({
+            properties
+        });
+    } catch (err) {
+        console.log(JSON.stringify({ ghlContact, baseProperties: properties, assignedToUser, err }, null, 4));
+        throw err;
+    }
     const companyProps = extractCompanyProperties(properties?.company, ghlContact);
 
     let companyCreated = null;
@@ -551,6 +556,9 @@ export async function migrateContactsToHubspot({
         while (await cursor.hasNext()) {
             if (Number.isInteger(limit) && processed >= limit) {
                 break;
+            }
+            if ((processed % 50) === 0) {
+                console.log(`processed ${processed} contacts`);
             }
             const contact = await cursor.next();
             if (!contact) {
