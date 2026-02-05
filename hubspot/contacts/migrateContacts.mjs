@@ -55,6 +55,98 @@ async function recordFailedMigration(db, {
     );
 }
 
+export async function reimportFailedContacts({
+    mongoUri = process.env.MONGO_URI || "mongodb://localhost:27017",
+    dbName = "GoHighLevel",
+    hubspotAccessToken = process.env.HUBSPOT_ACCESS_TOKEN,
+    dryRun = false
+} = {}) {
+    if (!hubspotAccessToken && !dryRun) {
+        throw new Error("HUBSPOT_ACCESS_TOKEN is not set");
+    }
+    const { client, db } = await getDb(mongoUri, dbName);
+    try {
+        const failures = await db.collection("hubspot_failed_migrations").find({
+            entityType: "contact",
+            reason: { $regex: "reimport error: Cannot access 'companyProps'", $options: "i" }
+        }).toArray();
+        const hubspotClient = dryRun ? null : new Client({ accessToken: hubspotAccessToken });
+        let processed = 0;
+        let succeeded = 0;
+        for (const failure of failures) {
+            processed += 1;
+            console.log(failure?.reason);
+            const ghlId = failure?.ghlId;
+            if (!ghlId) {
+                continue;
+            }
+            const contact = await db.collection("contacts").findOne({ id: ghlId });
+            if (!contact) {
+                continue;
+            }
+            try {
+                const created = await createBaseHubspotContact(contact, hubspotClient, { dryRun, db });
+                if (!dryRun) {
+                    await upsertGhlHubspotIdMap(db, {
+                        ghlId: contact.id,
+                        hubspotId: created?.id,
+                        objectTypeId: "contact"
+                    });
+                    await db.collection("hubspot_failed_migrations").deleteOne({
+                        entityType: "contact",
+                        ghlId
+                    });
+                }
+                succeeded += 1;
+            } catch (err) {
+                await recordFailedMigration(db, {
+                    entityType: "contact",
+                    ghlId,
+                    reason: `reimport error: ${err?.message || err}`
+                });
+                console.error("reimport contact failed", ghlId, err?.message || err);
+            }
+        }
+        return { processed, succeeded, failed: processed - succeeded };
+    } finally {
+        await client.close();
+    }
+}
+
+export async function reconcileOwners({
+    mongoUri = process.env.MONGO_URI || "mongodb://localhost:27017",
+    dbName = "GoHighLevel",
+    hubspotAccessToken = process.env.HUBSPOT_ACCESS_TOKEN
+} = {}) {
+    if (!hubspotAccessToken) {
+        throw new Error("HUBSPOT_ACCESS_TOKEN is not set");
+    }
+    const { client, db } = await getDb(mongoUri, dbName);
+    try {
+        const hubspotClient = new Client({ accessToken: hubspotAccessToken });
+        const mapCursor = db.collection("GHLHubspotIdMap").find({ objectTypeId: "contact" });
+        while (await mapCursor.hasNext()) {
+            const mapping = await mapCursor.next();
+            if (!mapping?.ghlId || !mapping?.hubspotId) {
+                continue;
+            }
+            const contact = await db.collection("contacts").findOne({ id: mapping.ghlId });
+            if (contact?.assignedTo) {
+                const  user = await db.collection("users").findOne({ id: contact.assignedTo });
+                if (user && user?.hubSpot?.id) {
+                    console.log(user.email, user.firstName, user.lastName);
+                    await hubspotClient.crm.contacts.basicApi.update(mapping.hubspotId, {
+                        properties: { hubspot_owner_id: user.hubSpot.id }
+                    });
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                }
+            }
+        }
+    } finally {
+        await client.close();
+    }
+}
+// console.log(await reimportFailedContacts({ dryRun: false }));
 export async function deleteHubspotObjectsByImportTag(
     hubspotClient,
     { importTag = "GHL_MIGRATION", dryRun = false } = {}
@@ -316,6 +408,7 @@ export async function createBaseHubspotContact(
         }
     });
     const properties = buildBaseContactProperties(baseProperties);
+    const companyProps = extractCompanyProperties(properties?.company, ghlContact);
 
     if (dryRun) {
         console.log(JSON.stringify({ ghlContact, baseProperties: properties, assignedToUser, companyProps }, null, 2));
@@ -331,8 +424,6 @@ export async function createBaseHubspotContact(
         console.log(JSON.stringify({ ghlContact, baseProperties: properties, assignedToUser, err }, null, 4));
         throw err;
     }
-    const companyProps = extractCompanyProperties(properties?.company, ghlContact);
-
     let companyCreated = null;
     if (created.id) {
         companyProps.hubspot_owner_id = assignedToUser?.hubSpot?.id;

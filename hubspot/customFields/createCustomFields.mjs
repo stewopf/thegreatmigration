@@ -397,7 +397,9 @@ export const CUSTOM_FIELDS = [
                 "Premium Domain",
                 "Custom Logo",
                 "Domain Integration",
-                "Custom Email"
+                "Custom Email",
+                "Google My Business",
+                "Google My Business Listings"
             ],
             groupName: COMPANY_GROUP_NAME,
         },
@@ -492,12 +494,15 @@ export const CUSTOM_FIELDS = [
             fieldType: "select",
             options: [
                 "Auto Repair/Shop",
+                "Auto Repair",
                 "Transportation",
                 "Auto Wash/Detailing",
                 "Restaurants & Bars",
                 "Catering",
+                "Construction",
                 "Construction & Remodeling",
                 "Construction Materials",
+                "Cleaning Services",
                 "Painting",
                 "Solar Energy Contractor",
                 "Metalwork",
@@ -700,6 +705,50 @@ export const CUSTOM_FIELDS = [
     ]}
 ];
 
+export async function patchContractedServicesOnContacts({
+    dryRun = false,
+    propertyName = "via_industry"
+} = {}) {
+    const hubspotClient = buildHubspotClient();
+    const field = CUSTOM_FIELDS
+        .find((item) => item.objectType === "company")
+        ?.fields?.find((f) => f.name === propertyName);
+    if (!field) {
+        throw new Error(`No field definition found for ${propertyName}`);
+    }
+    const options = Array.isArray(field.options)
+        ? field.options.map((option, index) => ({
+            label: option,
+            value: toHubspotPropertyName(option),
+            displayOrder: index,
+            hidden: false
+        }))
+        : [];
+    const payload = { options };
+    if (dryRun) {
+        console.log(`[dry-run] patch contacts property ${propertyName}`);
+        return payload;
+    }
+    try {
+        await hubspotClient.crm.properties.coreApi.getByName("company", propertyName);
+    } catch (err) {
+        const status = err?.code || err?.response?.statusCode || err?.response?.status;
+        if (status !== 404) {
+            throw err;
+        }
+        const createPayload = {
+            name: propertyName,
+            label: field.label || propertyName,
+            type: "enumeration",
+            fieldType: "checkbox",
+            groupName: COMPANY_GROUP_NAME,
+            options
+        };
+        await createProperty(hubspotClient, "company", createPayload);
+    }
+    return hubspotClient.crm.properties.coreApi.update("company", propertyName, payload);
+}
+// console.log(await patchContractedServicesOnContacts({ dryRun: false }));
 function toCamelCase(input) {
     return input.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 }

@@ -442,6 +442,7 @@ function normalizeEnumerationValue(value) {
 }
 async function buildDealProperties(opportunity, { defaultDealstage, defaultPipeline, hsTagIds, db, companyApexId } = {}) {
     const dealname =
+        normalizePropertyValue(opportunity?.contact?.companyName) ||
         normalizePropertyValue(opportunity?.name) ||
         normalizePropertyValue(opportunity?.title) ||
         normalizePropertyValue(opportunity?.displayName) ||
