@@ -73,7 +73,7 @@ Options:
   --checkpoint-id <id>     Checkpoint document id
   --resume                 Resume from checkpoint (default)
   --no-resume              Start from the beginning
-  --delete                 Delete all HubSpot notes
+  --delete                 Delete HubSpot notes by import_tag
   --batch-size <number>    Page size for delete (default: 100)
   --dry-run                Log actions without calling HubSpot
   --hubspot-access-token <token>  HubSpot private app token
@@ -193,7 +193,8 @@ function buildNoteProperties(note, { includePlainText = false } = {}) {
     const properties = {
         hs_note_body: htmlBody || textBody,
         hs_timestamp: timestamp,
-        import_tag: "GHL_MIGRATION"
+        import_tag: "GHL_MIGRATION",
+        ghl_id: note?.id
     };
     if (includePlainText && textBody && textBody !== htmlBody) {
         properties.hs_note_body_plain_text = textBody;
@@ -233,6 +234,18 @@ function getRelationRecordId(note, objectKey) {
     return match?.recordId || null;
 }
 
+async function getAppointmentById(db, appointmentId, cache) {
+    if (!appointmentId) {
+        return null;
+    }
+    if (cache.has(appointmentId)) {
+        return cache.get(appointmentId);
+    }
+    const appointment = await db.collection("appointments").findOne({ id: appointmentId });
+    cache.set(appointmentId, appointment || null);
+    return appointment;
+}
+
 async function checkPlainTextProperty(hubspotClient) {
     try {
         await hubspotClient.crm.properties.coreApi.getByName("notes", "hs_note_body_plain_text");
@@ -261,6 +274,7 @@ export async function migrateNotesToHubspot({
         throw new Error("HUBSPOT_ACCESS_TOKEN is not set");
     }
 
+    let progressInterval = 25;
     const { client, db } = await getDb(mongoUri, dbName);
     try {
         const notesColl = db.collection(notesCollection);
@@ -285,7 +299,7 @@ export async function migrateNotesToHubspot({
         if (limit) {
             cursor = cursor.limit(Number(limit));
         }
-        const progressInterval = 100;
+        const progressInterval = 25;
 
         const summary = {
             processed: 0,
@@ -309,11 +323,19 @@ export async function migrateNotesToHubspot({
             includePlainText = await checkPlainTextProperty(hubspotClient);
         }
 
+        const appointmentCache = new Map();
         for await (const note of cursor) {
             let lastProcessedId = note?._id ? String(note._id) : undefined;
-            const contactId = note?.contactId || getRelationRecordId(note, "contact");
-            const opportunityId = note?.opportunityId || getRelationRecordId(note, "opportunity");
+            let contactId = note?.contactId || getRelationRecordId(note, "contact");
+            let opportunityId = note?.opportunityId || getRelationRecordId(note, "opportunity");
             const appointmentId = getRelationRecordId(note, "appointment");
+            if (appointmentId && (!contactId || !opportunityId)) {
+                const appointment = await getAppointmentById(db, appointmentId, appointmentCache);
+                if (appointment) {
+                    contactId = contactId || appointment?.contactId || appointment?.contact?.id;
+                    opportunityId = opportunityId || appointment?.opportunityId;
+                }
+            }
             if (!contactId && !opportunityId) {
                 summary.skippedMissingContactId += 1;
                 summary.skippedMissingOpportunityId += 1;
@@ -329,6 +351,11 @@ export async function migrateNotesToHubspot({
                 continue;
             }
             summary.processed += 1;
+            if (summary.processed % progressInterval === 0) {
+                console.log(
+                    `notes progress: processed=${summary.processed}, created=${summary.created}, skippedMissingContactId=${summary.skippedMissingContactId}, skippedMissingOpportunityId=${summary.skippedMissingOpportunityId}, skippedMissingHubspotId=${summary.skippedMissingHubspotId}, skippedMissingBody=${summary.skippedMissingBody}, errors=${summary.errors}`
+                );
+            }
             let hubspotContactId = null;
             let hubspotDealId = null;
             if (contactId) {
@@ -435,7 +462,8 @@ export async function migrateNotesToHubspot({
 export async function deleteHubspotNotes({
     hubspotAccessToken = process.env.HUBSPOT_ACCESS_TOKEN,
     dryRun = false,
-    batchSize = 100
+    batchSize = 100,
+    importTag = "GHL_MIGRATION"
 } = {}) {
     if (!hubspotAccessToken) {
         if (dryRun) {
@@ -448,8 +476,23 @@ export async function deleteHubspotNotes({
     let after;
 
     do {
-        const page = await hubspotClient.crm.objects.notes.basicApi.getPage(batchSize, after);
-        const notes = Array.isArray(page?.results) ? page.results : [];
+        const searchRequest = {
+            filterGroups: [
+                {
+                    filters: [
+                        {
+                            propertyName: "import_tag",
+                            operator: "EQ",
+                            value: importTag
+                        }
+                    ]
+                }
+            ],
+            limit: batchSize,
+            after
+        };
+        const searchResponse = await hubspotClient.crm.objects.searchApi.doSearch("notes", searchRequest);
+        const notes = Array.isArray(searchResponse?.results) ? searchResponse.results : [];
         result.scanned += notes.length;
         if (!dryRun && notes.length > 0) {
             const inputs = notes.map((note) => ({ id: note.id }));
@@ -464,7 +507,7 @@ export async function deleteHubspotNotes({
                 }
             }
         }
-        after = page?.paging?.next?.after;
+        after = searchResponse?.paging?.next?.after;
     } while (after);
 
     return result;
@@ -506,7 +549,8 @@ if (import.meta.url === new URL(process.argv[1], "file:").href) {
             const result = await deleteHubspotNotes({
                 hubspotAccessToken: cli.hubspotAccessToken,
                 dryRun: cli.dryRun,
-                batchSize: cli.batchSize
+                batchSize: cli.batchSize,
+                importTag: "GHL_MIGRATION"
             });
             console.log(`delete complete: scanned ${result.scanned}, deleted ${result.deleted}`);
             return;

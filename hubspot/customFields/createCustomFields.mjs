@@ -702,6 +702,178 @@ export const CUSTOM_FIELDS = [
             fieldType: "text",
             groupName: APPOINTMENT_GROUP_NAME,
         },
+    ]},
+    {objectType:'notes', fields:[
+        {
+            name: "import_tag",
+            label: "Import Tag",
+            type: "string",
+            fieldType: "text",
+            hidden: true,
+        },
+        {
+            name: "ghl_id",
+            label: "GHL Id",
+            type: "string",
+            fieldType: "text",
+        },
+        {
+            name:"ghl_channel",
+            label: "GHL Channel",
+            type:"enumeration",
+            fueldType:"select",
+            options:[
+                {label:"SMS", value:"sms"},
+                {label:"Instagram", value:"ig"},
+                {label:"WhatsApp", value:"whatsapp"},
+                {label:"Chat", value:"chat"}
+            ]
+        },
+        {
+            name:"ghl_direction",
+            label: "GHL Direction",
+            type:"enumeration",
+            fieldType:"select",
+            options:[
+                {label:"Inbound", value:"inbound"},
+                {label:"Outbound", value:"outbound"},
+                {label:"Mixed", value:"mixed"}
+            ]
+        },
+        {
+            name:"ghl_conversation_updated_at",
+            label: "GHL Conversation Updated At",
+            type: "datetime",
+            fieldType: "date",
+        },
+        {
+            name:"ghl_conversation_created_at",
+            label: "GHL Conversation Created At",
+            type: "datetime",
+            fieldType: "date",
+        },
+        {
+            name:"ghl_conversation_id",
+            label: "GHL Conversation Id",
+            type: "string",
+            fieldType: "text",
+        },
+        {
+            name:"ghl_source",
+            label:"GHL Source",
+            type:"enumeration",
+            fieldType:"select",
+            options:[
+                {label:"Campaign", value:"campaign"},
+                {label:"Automation", value:"automation"},
+                {label:"Manual", value:"manual"},
+                {label:"App", value:"app"},
+                {label:"Workflow", value:"workflow"},
+                {label:"Bulk Actions", value:"bulk_actions"},
+            ],
+        }
+
+    ]},
+    {objectType:'emails', fields:[
+        {
+            name: "import_tag",
+            label: "Import Tag",
+            type: "string",
+            fieldType: "text",
+            hidden: true,
+        },
+        {
+            name: "ghl_id",
+            label: "GHL Id",
+            type: "string",
+            fieldType: "text",
+        },
+        {
+            name: "ghl_conversation_id",
+            label: "GHL Conversation Id",
+            type: "string",
+            fieldType: "text",
+        },
+        {
+            name: "ghl_conversation_updated_at",
+            label: "GHL Conversation Updated At",
+            type: "datetime",
+            fieldType: "date",
+        },
+        {
+            name: "ghl_direction",
+            label: "GHL Direction",
+            type: "enumeration",
+            fieldType: "select",
+            options:[
+                {label:"Inbound", value:"inbound"},
+                {label:"Outbound", value:"outbound"}
+            ],
+        },
+        {
+            name: "ghl_status",
+            label: "GHL Status",
+            type: "enumeration",
+            fieldType: "select",
+            options:[
+                {label:"Open", value:"open"},
+                {label:"Closed", value:"closed"},
+                {label:"Sent", value:"sent"}
+            ],
+        },
+        {
+            name:"ghl_source",
+            label:"GHL Source",
+            type:"enumeration",
+            fieldType:"select",
+            options:[
+                {label:"Campaign", value:"campaign"},
+                {label:"Automation", value:"automation"},
+                {label:"Manual", value:"manual"},
+                {label:"App", value:"app"},
+                {label:"Workflow", value:"workflow"},
+                {label:"Bulk Actions", value:"bulk_actions"},
+            ],
+        }
+    ]},
+    {objectType:'calls', fields:[
+        {
+            name: "import_tag",
+            label: "Import Tag",
+            type: "string",
+            fieldType: "text",
+            hidden: true,
+        },
+        {
+            name: "ghl_id",
+            label: "GHL Id",
+            type: "string",
+            fieldType: "text",
+        },
+        {
+            name: "ghl_conversation_id",
+            label: "GHL Conversation Id",
+            type: "string",
+            fieldType: "text",
+        },
+        {
+            name: "ghl_conversation_updated_at",
+            label: "GHL Conversation Updated At",
+            type: "datetime",
+            fieldType: "date",
+        },
+        {
+            name:"ghl_source",
+            label:"GHL Source",
+            type:"enumeration",
+            fieldType:"select",
+            options:[
+                {label:"Inbound", value:"inbound"},
+                {label:"Outbound", value:"outbound"},
+                {label:"Campaign", value:"campaign"},
+                {label:"App", value:"app"}
+            ],
+        }
     ]}
 ];
 
